@@ -54,9 +54,28 @@
     const queue = [];
     let showing = false;
 
+    // One shared AudioContext, created immediately at page load rather than
+    // lazily inside each playback call. A context created synchronously up
+    // front is far more likely to actually be in the 'running' state (vs.
+    // 'suspended' with no error, silently producing nothing) than one
+    // created later inside an async chain -- confirmed by testing that a
+    // late-created context for TTS playback stayed silent in OBS even
+    // though this exact same chime code was audible.
+    let sharedAudioCtx = null;
+    function getAudioContext() {
+      if (!sharedAudioCtx) {
+        sharedAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (sharedAudioCtx.state === 'suspended') {
+        sharedAudioCtx.resume().catch(() => {});
+      }
+      return sharedAudioCtx;
+    }
+    getAudioContext();
+
     function playChime() {
       try {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const ctx = getAudioContext();
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         osc.connect(gain);
@@ -137,6 +156,30 @@
       }, 1000);
     }
 
+    // Primary TTS path: play a server-rendered audio file (see
+    // src/ttsEngine.js). Decoded and played through the same Web Audio API
+    // (AudioContext) the chime already uses, rather than a plain <audio>
+    // tag -- confirmed by testing that OBS's Browser Source plays the
+    // AudioContext-based chime fine but was silently dropping <audio>
+    // element playback, likely a separate/stricter autoplay policy for
+    // HTMLMediaElement even where AudioContext is allowed.
+    function playAudioUrl(url) {
+      fetch(url)
+        .then((res) => res.arrayBuffer())
+        .then((buf) => {
+          const ctx = getAudioContext();
+          return ctx.decodeAudioData(buf).then((decoded) => {
+            const source = ctx.createBufferSource();
+            source.buffer = decoded;
+            source.connect(ctx.destination);
+            source.start();
+          });
+        })
+        .catch((e) => {
+          console.error('[overlay] TTS audio playback failed:', e);
+        });
+    }
+
     function connect() {
       const ws = new WebSocket(`ws://${location.host}`);
       ws.onmessage = (evt) => {
@@ -150,7 +193,11 @@
           queue.push(data);
           processQueue();
         } else if (data.kind === 'tts') {
-          speak(data.text);
+          if (data.url) {
+            playAudioUrl(data.url);
+          } else if (data.text) {
+            speak(data.text);
+          }
         }
       };
       ws.onclose = () => setTimeout(connect, 2000);

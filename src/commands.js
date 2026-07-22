@@ -32,13 +32,20 @@ const BUILTINS = {
     const jokes = configStore.get('jokes') || [];
     if (jokes.length === 0) return 'No jokes loaded — add some to config/jokes.json.';
     const joke = jokes[Math.floor(Math.random() * jokes.length)];
+    // alert() (chime + visual popup) is what actually shows up in OBS --
+    // speak() alone is not enough, since OBS's Browser Source generally has
+    // no usable TTS voices and would otherwise produce nothing perceptible.
+    alertServer.alert('joke', joke);
     alertServer.speak(joke);
     return joke;
   },
   pp: (message) => {
     const name = message.displayName || message.username;
     const length = Math.floor(Math.random() * 100) + 1;
-    return `${name}'s pp is ${length} inches long!`;
+    const reply = `${name}'s pp is ${length} inches long!`;
+    alertServer.alert('pp', reply);
+    alertServer.speak(reply);
+    return reply;
   },
   so: async (message, args) => {
     const targetRaw = args[0] || state.getLastRaider();
@@ -49,13 +56,17 @@ const BUILTINS = {
       logger.action('twitch-api', `!so lookup for "${target}" failed: ${err.message}`, false);
       return null;
     });
+    let reply;
     if (info) {
-      return info.game
+      reply = info.game
         ? `Go check out ${info.displayName} at twitch.tv/${info.login} — they were last streaming ${info.game}!`
         : `Go check out ${info.displayName} at twitch.tv/${info.login}!`;
     }
 
-    return `Go check out ${target}!`;
+    if (!reply) reply = `Go check out ${target}!`;
+    alertServer.alert('so', reply);
+    alertServer.speak(reply);
+    return reply;
   },
 };
 
