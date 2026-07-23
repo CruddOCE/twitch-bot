@@ -5,6 +5,7 @@ const configStore = require('./configStore');
 const alertServer = require('./alertServer');
 const state = require('./state');
 const logger = require('./logger');
+const { emitChatLine } = require('./chatEmit');
 
 function fillTemplate(str, vars) {
   return str.replace(/\{(\w+)\}/g, (_, key) => (key in vars ? vars[key] : `{${key}}`));
@@ -98,8 +99,7 @@ function start() {
     const isMod = Boolean(tags.mod) || tags.badges?.broadcaster === '1';
     const isBroadcaster = tags.badges?.broadcaster === '1';
 
-    const badge = isBroadcaster ? '(broadcaster) ' : isMod ? '(mod) ' : '';
-    console.log(`[chat] ${badge}${displayName}: ${text}`);
+    emitChatLine('twitch', displayName, isMod, isBroadcaster, text);
 
     const ctx = {
       reply: (msg) => client.say(target, `@${displayName} ${msg}`),
