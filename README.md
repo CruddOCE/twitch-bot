@@ -20,12 +20,14 @@ engine, no YouTube setup, no Google Cloud project needed.
 - Mods and the broadcaster are always exempt from auto-mod.
 - Stream alerts + an OBS overlay: subs, resubs, gift subs, cheers, and raids.
   Runs on a small local web server you add to OBS as a Browser Source.
-- Alerts and `!joke` also show as a popup with a chime through the overlay.
-  There's a best-effort attempt to read `!joke` aloud via the browser's
-  built-in text-to-speech, but OBS's Browser Source usually doesn't have any
-  TTS voices available (a limitation of its embedded browser) — treat the
-  chime + visual popup as the real notification, and the voice as a bonus if
-  your setup happens to support it.
+- Alerts and `!joke`/`!pp`/`!so` all show as a popup with a chime through the
+  overlay, and are read aloud too — speech is generated server-side using
+  Windows' built-in voices (randomly picked each time) rather than relying on
+  the browser's own text-to-speech, since OBS's Browser Source usually has no
+  TTS voices available to it at all (a limitation of its embedded browser).
+- A dark-themed **control panel** (`twitch-bot-control.exe`) for day-to-day
+  use — Start/Stop, a live color-coded chat feed, an activity log, and
+  one-click OBS setup and test alerts. See below.
 
 ## Requirements
 
@@ -36,7 +38,55 @@ engine, no YouTube setup, no Google Cloud project needed.
 - For moderation actions (timeout/delete), the bot account must be a
   moderator in your channel: type `/mod <botname>` in your own Twitch chat.
 
-## Setup
+## Easiest: double-click install-twitch-bot.exe
+
+Double-click [`install-twitch-bot.exe`](install-twitch-bot.exe) — it opens a
+console window that installs dependencies, runs the setup wizard (see below)
+if you haven't configured `.env` yet, and then starts the bot. That's the
+whole process; no terminal typing required.
+
+It's a tiny native launcher (source in
+[`installer/Program.cs`](installer/Program.cs), compiled with the C#
+compiler that ships with Windows — nothing downloaded) that just opens
+[`install-and-start.bat`](install-and-start.bat), which does the actual
+work. Requires Node.js to already be installed — if it isn't, the script
+opens the download page for you and stops so you can install it first, then
+run it again.
+
+Re-running it later is safe: if `.env` already exists it'll ask whether you
+want to redo the setup wizard, then start the bot either way. It also
+creates (or refreshes) a **`twitch-bot` shortcut on your Desktop** pointing
+at the control panel below.
+
+## Day-to-day: twitch-bot-control.exe
+
+Once you've set up once, use
+[`twitch-bot-control.exe`](twitch-bot-control.exe) (via the Desktop shortcut,
+or directly) to turn the bot on and off around your streams — a proper
+dashboard, not a bare console window:
+
+- **Live Chat panel** — every message shows up as it arrives, with a
+  timestamp, a `[MOD]`/`[HOST]` badge where it applies, and each username
+  rendered in its own consistent color.
+- **Activity Log panel** — connection status, commands run, moderation
+  actions taken, and any errors.
+- **Start Bot / Stop Bot** toggle.
+- **Add OBS Browser Source** — paste your OBS WebSocket password (Tools >
+  WebSocket Server Settings > Show Connect Info) and click it to add the
+  overlay to your current scene automatically, audio already routed.
+- **Test Alert** — fires a real alert + spoken test message through the
+  running bot's alert server, so you can confirm OBS is actually connected
+  before going live.
+- **Update** — pulls the latest version from GitHub. Since Windows won't let
+  git overwrite a running `.exe`, clicking this closes the app, updates, and
+  reopens it automatically (a console window shows progress in between).
+
+Closing the window stops the bot if it's running, so there's no separate
+"turn it off" step to remember after a stream.
+
+## Manual / command-line setup
+
+If you'd rather not use the `.exe`s above:
 
 1. Clone this repo and open a terminal in it.
 2. Run the guided setup wizard:
@@ -51,12 +101,6 @@ engine, no YouTube setup, no Google Cloud project needed.
    npm start
    ```
 
-On Windows, double-clicking [`install-and-start.bat`](install-and-start.bat)
-does all of the above for you (installs dependencies, runs the wizard if
-`.env` doesn't exist yet, then starts the bot) — no terminal typing required.
-Re-running it later is safe: if `.env` already exists it'll ask whether you
-want to redo the wizard, then start the bot either way.
-
 Only need to read chat, not have the bot post/moderate? You still need a
 Twitch app (Client ID) for `npm run setup`/`npm run twitch-auth` to work,
 since Twitch's chat connection always requires a logged-in bot account —
@@ -68,9 +112,9 @@ there's no anonymous/read-only mode like YouTube's API-key option.
 |---|---|---|
 | `!uptime` | anyone | How long the bot has been running |
 | `!commands` | anyone | Lists every available command |
-| `!joke` | anyone | Random joke, also read aloud via the overlay |
-| `!pp` | anyone | Silly random-length joke |
-| `!so [username]` | mods/broadcaster | Shoutout — explicit target, or falls back to the last raider |
+| `!joke` | anyone | Random joke — also fires an OBS alert (popup + chime + spoken voice) |
+| `!pp` | anyone | Silly random-length joke — also fires an OBS alert |
+| `!so [username]` | mods/broadcaster | Shoutout — explicit target, or falls back to the last raider; also fires an OBS alert |
 
 Add your own in `config/commands.json`:
 ```json
@@ -114,6 +158,7 @@ escalating to a timeout (`escalatedTimeoutSeconds`). All of this hot-reloads
 
 ## Updating
 
+Click **Update** in the control panel, or run:
 ```
 npm run update
 ```
@@ -123,6 +168,7 @@ nothing is lost, you just resolve it manually via `git status`).
 
 ## Uninstalling
 
+Double-click [`uninstall-twitch-bot.exe`](uninstall-twitch-bot.exe), or run:
 ```
 npm run uninstall
 ```
@@ -134,15 +180,22 @@ touches your source code, config, or git history.
 - `index.js` — entry point.
 - `src/twitchBot.js` — Twitch IRC connection (via `tmi.js`), chat/mod
   event handling.
+- `src/chatEmit.js` — emits the structured `@@CHAT@@|` lines the control
+  panel parses for its live chat feed.
 - `src/commands.js` — built-in + custom command handling.
 - `src/moderation.js` — auto-mod rule evaluation.
 - `src/configStore.js` — loads and hot-reloads `config/*.json`.
 - `src/alertServer.js` + `public/overlay.html` — the local alert/overlay
   server and the OBS Browser Source page it serves.
+- `src/ttsEngine.js` — server-side text-to-speech (Windows SAPI voices via
+  PowerShell), used by alerts and `!joke`/`!pp`/`!so`.
 - `src/twitchAuth.js` / `src/twitchApi.js` — OAuth login flow and the Helix
   API client used by `!so`.
 - `scripts/` — setup wizard, token refresh, update, uninstall, and the OBS
   WebSocket integration.
+- `installer/` — C# source for the three compiled `.exe`s (control panel,
+  installer, uninstaller), compiled with the C# compiler that ships with
+  Windows — nothing downloaded.
 - `test/run.js` — offline test suite (`npm test`), no live credentials
   needed.
 

@@ -565,13 +565,18 @@ class MainForm : Form
         else AppendChat(rawLine);
     }
 
+    // Twitch-only here, so the platform field in the wire format below is
+    // unused (always "twitch") -- kept as-is rather than reshaping the
+    // format, since chatEmit.js's format is otherwise identical to
+    // stream-bot's and there's no benefit to diverging it.
+    private static readonly Color TwitchColor = Color.FromArgb(169, 112, 255);
+
     private void AppendChat(string rawLine)
     {
         // Format: @@CHAT@@|platform|base64(username)|isMod(0/1)|isBroadcaster(0/1)|base64(text)
         string[] parts = rawLine.Substring(ChatPrefix.Length).Split('|');
         if (parts.Length < 5) return;
 
-        string platform = parts[0];
         string username = DecodeBase64(parts[1]);
         bool isMod = parts[2] == "1";
         bool isBroadcaster = parts[3] == "1";
@@ -581,9 +586,7 @@ class MainForm : Form
         chatBox.SelectionLength = 0;
 
         AppendColored(chatBox, DateTime.Now.ToString("HH:mm:ss "), Theme.MutedText, Theme.Small);
-
-        Color platformColor = platform == "twitch" ? Color.FromArgb(169, 112, 255) : Color.FromArgb(255, 90, 90);
-        AppendColored(chatBox, "[" + (platform == "twitch" ? "Twitch" : "YouTube") + "] ", platformColor, Theme.Small);
+        AppendColored(chatBox, "[Twitch] ", TwitchColor, Theme.Small);
 
         if (isBroadcaster) AppendColored(chatBox, "[HOST] ", Color.Gold, Theme.Small);
         else if (isMod) AppendColored(chatBox, "[MOD] ", Theme.Running, Theme.Small);
