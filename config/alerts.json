@@ -1,6 +1,7 @@
 {
   "enabled": true,
   "displaySeconds": 10,
+  "autoShoutoutOnRaid": true,
   "templates": {
     "sub": "{user} just subscribed!",
     "resub": "{user} resubscribed for {months} months!",

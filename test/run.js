@@ -15,6 +15,8 @@ fs.mkdirSync(path.join(scratchDir, 'config'));
 fs.copyFileSync(path.join(__dirname, '..', 'config', 'commands.json'), path.join(scratchDir, 'config', 'commands.json'));
 fs.copyFileSync(path.join(__dirname, '..', 'config', 'jokes.json'), path.join(scratchDir, 'config', 'jokes.json'));
 fs.copyFileSync(path.join(__dirname, '..', 'config', 'alerts.json'), path.join(scratchDir, 'config', 'alerts.json'));
+fs.copyFileSync(path.join(__dirname, '..', 'config', 'cooldowns.json'), path.join(scratchDir, 'config', 'cooldowns.json'));
+fs.copyFileSync(path.join(__dirname, '..', 'config', 'timers.json'), path.join(scratchDir, 'config', 'timers.json'));
 fs.writeFileSync(
   path.join(scratchDir, 'config', 'moderation.json'),
   JSON.stringify({
@@ -108,6 +110,61 @@ async function run() {
   assert.strictEqual(handled, true);
   assert.ok(replied.includes('raiderperson'), 'shoutout should fall back to the last raider when no target is given');
   console.log('!so falls back to last raider: ok');
+
+  handled = await commands.handle({ text: '!lurk', username: 'lurkUser', displayName: 'LurkyMcLurkface' }, ctx);
+  assert.strictEqual(handled, true);
+  assert.ok(replied.includes('LurkyMcLurkface'), '!lurk should mention the display name');
+  console.log('builtin command (!lurk): ok');
+
+  handled = await commands.handle({ text: '!unlurk', username: 'unlurkUser', displayName: 'BackNow' }, ctx);
+  assert.strictEqual(handled, true);
+  assert.ok(replied.includes('BackNow'), '!unlurk should mention the display name');
+  console.log('builtin command (!unlurk): ok');
+
+  handled = await commands.handle({ text: '!title new title here', username: 'viewer1', isMod: false, isBroadcaster: false }, ctx);
+  assert.strictEqual(handled, true);
+  assert.ok(replied.toLowerCase().includes('only mods'), 'non-mods should be blocked from !title');
+  console.log('!title blocked for non-mods: ok');
+
+  handled = await commands.handle({ text: '!title', username: 'modUser2', isMod: true, isBroadcaster: false }, ctx);
+  assert.strictEqual(handled, true);
+  assert.ok(replied.startsWith('Usage:'), '!title with no argument should show usage');
+  console.log('!title with no argument shows usage: ok');
+
+  handled = await commands.handle({ text: '!title My New Title', username: 'modUser2', isMod: true, isBroadcaster: false }, ctx);
+  assert.strictEqual(handled, true);
+  assert.ok(replied.toLowerCase().includes('could not update'), '!title should fail gracefully without Twitch API creds');
+  console.log('!title fails gracefully without Twitch API creds: ok');
+
+  handled = await commands.handle({ text: '!game Just Chatting', username: 'modUser2', isMod: true, isBroadcaster: false }, ctx);
+  assert.strictEqual(handled, true);
+  assert.ok(replied.toLowerCase().includes('could not update'), '!game should fail gracefully without Twitch API creds');
+  console.log('!game fails gracefully without Twitch API creds: ok');
+
+  // --- Cooldowns ---
+  handled = await commands.handle(
+    { text: '!pp', username: 'cooldownTestUser', displayName: 'CDUser', isMod: false, isBroadcaster: false },
+    ctx
+  );
+  assert.strictEqual(handled, true);
+  const firstPpReply = replied;
+  assert.match(firstPpReply, /inches long!$/);
+
+  handled = await commands.handle(
+    { text: '!pp', username: 'cooldownTestUser', displayName: 'CDUser', isMod: false, isBroadcaster: false },
+    ctx
+  );
+  assert.strictEqual(handled, true);
+  assert.strictEqual(replied, firstPpReply, 'repeating a command immediately should be blocked by cooldown (reply unchanged)');
+  console.log('cooldown blocks a repeated command from the same user: ok');
+
+  handled = await commands.handle(
+    { text: '!uptime', username: 'cooldownTestUser', displayName: 'CDUser', isMod: false, isBroadcaster: false },
+    ctx
+  );
+  assert.strictEqual(handled, true);
+  assert.ok(replied.includes('Bot has been running for'), 'a different command for the same user should not share another command\'s cooldown');
+  console.log('cooldown is tracked per-command, not per-user: ok');
 
   // --- Moderation ---
   let result = moderation.evaluate({ username: 'viewer2', text: 'this has a badword in it', isMod: false, isBroadcaster: false });

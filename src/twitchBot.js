@@ -6,6 +6,7 @@ const alertServer = require('./alertServer');
 const state = require('./state');
 const logger = require('./logger');
 const { emitChatLine } = require('./chatEmit');
+const timers = require('./timers');
 
 function fillTemplate(str, vars) {
   return str.replace(/\{(\w+)\}/g, (_, key) => (key in vars ? vars[key] : `{${key}}`));
@@ -43,6 +44,7 @@ function start() {
   client.on('connected', () => {
     console.log(`[twitch] Connected to #${channel} as ${username}`);
     logger.action('twitch-connect', `Connected to #${channel} as ${username}`);
+    timers.start((msg) => client.say(channel, msg));
   });
 
   client.on('disconnected', (reason) => {
@@ -90,6 +92,19 @@ function start() {
       user: raiderUsername,
       viewers,
     });
+
+    const alerts = configStore.get('alerts');
+    if (alerts && alerts.autoShoutoutOnRaid) {
+      commands
+        .buildShoutoutMessage(raiderUsername)
+        .then((msg) => {
+          client.say(chan, msg);
+          logger.action('twitch-raid-shoutout', `Auto-shoutout for raider ${raiderUsername}: ${msg}`);
+        })
+        .catch((err) => {
+          logger.action('twitch-raid-shoutout', `Auto-shoutout failed: ${err.message}`, false);
+        });
+    }
   });
 
   client.on('message', async (target, tags, text, self) => {

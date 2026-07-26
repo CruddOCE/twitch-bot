@@ -8,6 +8,8 @@ const FILES = {
   moderation: 'moderation.json',
   jokes: 'jokes.json',
   alerts: 'alerts.json',
+  cooldowns: 'cooldowns.json',
+  timers: 'timers.json',
 };
 
 const DEFAULTS = {
@@ -15,10 +17,12 @@ const DEFAULTS = {
   moderation: { enabled: false },
   jokes: [],
   alerts: { enabled: false, displaySeconds: 6, templates: {} },
+  cooldowns: { enabled: false, defaultSeconds: 0, perCommand: {} },
+  timers: { enabled: false, intervalMinutes: 15, messages: [] },
 };
 
 const state = {};
-const listeners = { commands: [], moderation: [], jokes: [], alerts: [] };
+const listeners = { commands: [], moderation: [], jokes: [], alerts: [], cooldowns: [], timers: [] };
 const watchers = [];
 
 function loadFile(key) {

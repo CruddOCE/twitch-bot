@@ -3,7 +3,7 @@ const { openUrl } = require('./openBrowser');
 
 const PORT = 3940;
 const REDIRECT_URI = `http://localhost:${PORT}/callback`;
-const SCOPES = ['chat:read', 'chat:edit', 'moderator:manage:banned_users'];
+const SCOPES = ['chat:read', 'chat:edit', 'moderator:manage:banned_users', 'channel:manage:broadcast'];
 const TIMEOUT_MS = 5 * 60 * 1000;
 
 // Runs Twitch's implicit-grant OAuth flow via a local loopback server and

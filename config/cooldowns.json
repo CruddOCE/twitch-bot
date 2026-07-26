@@ -1,0 +1,7 @@
+{
+  "enabled": true,
+  "defaultSeconds": 5,
+  "perCommand": {
+    "so": 10
+  }
+}

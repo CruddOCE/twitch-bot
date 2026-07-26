@@ -114,7 +114,18 @@ there's no anonymous/read-only mode like YouTube's API-key option.
 | `!commands` | anyone | Lists every available command |
 | `!joke` | anyone | Random joke — also fires an OBS alert (popup + chime + spoken voice) |
 | `!pp` | anyone | Silly random-length joke — also fires an OBS alert |
-| `!so [username]` | mods/broadcaster | Shoutout — explicit target, or falls back to the last raider; also fires an OBS alert |
+| `!so [username]` | mods/broadcaster | Shoutout — explicit target, or falls back to the last raider; also fires an OBS alert. Raids get this automatically too (see below) |
+| `!lurk` | anyone | Announces you're lurking |
+| `!unlurk` | anyone | Announces you're back |
+| `!title <text>` | mods/broadcaster | Changes the stream title |
+| `!game <name>` | mods/broadcaster | Changes the stream category |
+
+`!title`/`!game` call Twitch's API directly, which only allows a channel's
+own token to change its info — they only work when `TWITCH_BOT_USERNAME` is
+the broadcaster's own account, and the token needs the
+`channel:manage:broadcast` scope. If you set this bot up before that scope
+was added, re-run `npm run twitch-auth` (or the setup wizard) to get a
+token that includes it.
 
 Add your own in `config/commands.json`:
 ```json
@@ -123,6 +134,37 @@ Add your own in `config/commands.json`:
   "discord": "Join the Discord: https://discord.gg/your-invite"
 }
 ```
+
+## Cooldowns
+
+Configured in `config/cooldowns.json`:
+```json
+{
+  "enabled": true,
+  "defaultSeconds": 5,
+  "perCommand": { "so": 10 }
+}
+```
+Applies per user, per command (mods/broadcaster always bypass it). A
+command on cooldown is silently ignored — no reply, no alert — rather than
+posting a "you're on cooldown" message, which would just be its own kind of
+spam. Hot-reloads like everything else.
+
+## Auto-messages / timers
+
+Configured in `config/timers.json`, off by default:
+```json
+{
+  "enabled": false,
+  "intervalMinutes": 15,
+  "messages": [
+    "Don't forget to follow if you're enjoying the stream!",
+    "Join the Discord: https://discord.gg/your-invite"
+  ]
+}
+```
+When enabled, rotates through `messages` in order, posting one to chat
+every `intervalMinutes`.
 
 ## Moderation
 
@@ -143,7 +185,9 @@ escalating to a timeout (`escalatedTimeoutSeconds`). All of this hot-reloads
 ## Alerts + OBS overlay
 
 1. Set `alerts.enabled: true` in `config/alerts.json` (on by default) and
-   customize the message templates if you like.
+   customize the message templates if you like. `autoShoutoutOnRaid`
+   (also on by default) makes raids trigger the same shoutout message
+   `!so` would, posted to chat automatically.
 2. Add `http://localhost:8090/overlay.html` as a Browser Source in OBS
    (adjust the port if you changed `ALERT_SERVER_PORT` in `.env`), or run:
    ```
@@ -182,8 +226,11 @@ touches your source code, config, or git history.
   event handling.
 - `src/chatEmit.js` — emits the structured `@@CHAT@@|` lines the control
   panel parses for its live chat feed.
-- `src/commands.js` — built-in + custom command handling.
+- `src/commands.js` — built-in + custom command handling, cooldown
+  tracking.
 - `src/moderation.js` — auto-mod rule evaluation.
+- `src/timers.js` — rotates through `config/timers.json`'s messages on an
+  interval.
 - `src/configStore.js` — loads and hot-reloads `config/*.json`.
 - `src/alertServer.js` + `public/overlay.html` — the local alert/overlay
   server and the OBS Browser Source page it serves.
@@ -191,7 +238,7 @@ touches your source code, config, or git history.
   used by alerts and `!joke`/`!pp`/`!so`. Shells out to `tts-helper.exe`
   rather than PowerShell (~3x faster per call — see `native/`).
 - `src/twitchAuth.js` / `src/twitchApi.js` — OAuth login flow and the Helix
-  API client used by `!so`.
+  API client used by `!so`/`!title`/`!game`.
 - `scripts/` — setup wizard, token refresh, update, uninstall, and the OBS
   WebSocket integration.
 - `installer/` — C# source for the three compiled GUI `.exe`s (control

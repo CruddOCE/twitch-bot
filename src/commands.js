@@ -6,7 +6,7 @@ const logger = require('./logger');
 
 const startTime = Date.now();
 const PREFIX = process.env.BOT_PREFIX || '!';
-const MOD_ONLY = new Set(['so']);
+const MOD_ONLY = new Set(['so', 'title', 'game']);
 
 function formatUptime(ms) {
   const totalSeconds = Math.floor(ms / 1000);
@@ -18,6 +18,21 @@ function formatUptime(ms) {
   if (m) parts.push(`${m}m`);
   parts.push(`${s}s`);
   return parts.join(' ');
+}
+
+// Shared by !so and twitchBot.js's auto-shoutout-on-raid, so a raid gets
+// the exact same message a mod would get from typing !so themselves.
+async function buildShoutoutMessage(target) {
+  const info = await twitchApi.getChannelInfo(target).catch((err) => {
+    logger.action('twitch-api', `shoutout lookup for "${target}" failed: ${err.message}`, false);
+    return null;
+  });
+  if (info) {
+    return info.game
+      ? `Go check out ${info.displayName} at twitch.tv/${info.login} — they were last streaming ${info.game}!`
+      : `Go check out ${info.displayName} at twitch.tv/${info.login}!`;
+  }
+  return `Go check out ${target}!`;
 }
 
 const BUILTINS = {
@@ -52,23 +67,81 @@ const BUILTINS = {
     if (!targetRaw) return 'No one to shout out yet — try !so <username>.';
     const target = targetRaw.replace(/^@/, '');
 
-    const info = await twitchApi.getChannelInfo(target).catch((err) => {
-      logger.action('twitch-api', `!so lookup for "${target}" failed: ${err.message}`, false);
-      return null;
-    });
-    let reply;
-    if (info) {
-      reply = info.game
-        ? `Go check out ${info.displayName} at twitch.tv/${info.login} — they were last streaming ${info.game}!`
-        : `Go check out ${info.displayName} at twitch.tv/${info.login}!`;
-    }
-
-    if (!reply) reply = `Go check out ${target}!`;
+    const reply = await buildShoutoutMessage(target);
     alertServer.alert('so', reply);
     alertServer.speak(reply);
     return reply;
   },
+  lurk: (message) => {
+    const name = message.displayName || message.username;
+    return `${name} has gone into lurk mode. Thanks for hanging out!`;
+  },
+  unlurk: (message) => {
+    const name = message.displayName || message.username;
+    return `Welcome back, ${name}!`;
+  },
+  title: async (message, args) => {
+    const newTitle = args.join(' ').trim();
+    if (!newTitle) return 'Usage: !title <new stream title>';
+    try {
+      await twitchApi.updateChannelInfo(process.env.TWITCH_CHANNEL, { title: newTitle });
+      return `Title updated to: ${newTitle}`;
+    } catch (err) {
+      logger.action('twitch-api', `!title failed: ${err.message}`, false);
+      return `Could not update the title (${err.message}).`;
+    }
+  },
+  game: async (message, args) => {
+    const newGame = args.join(' ').trim();
+    if (!newGame) return 'Usage: !game <category name>';
+    try {
+      await twitchApi.updateChannelInfo(process.env.TWITCH_CHANNEL, { gameName: newGame });
+      return `Category updated to: ${newGame}`;
+    } catch (err) {
+      logger.action('twitch-api', `!game failed: ${err.message}`, false);
+      return `Could not update the category (${err.message}).`;
+    }
+  },
 };
+
+// Per-user-per-command cooldown tracking. Without periodic cleanup this
+// would grow forever, one entry per distinct (command, username) pair ever
+// seen -- same class of leak fixed in moderation.js's userState, so it
+// gets the same treatment here from the start.
+const lastUsed = new Map(); // key: `${cmd}:${username}` -> last-used timestamp
+const COOLDOWN_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
+const cooldownCleanupTimer = setInterval(() => {
+  const cooldowns = configStore.get('cooldowns');
+  const maxSeconds = Math.max(
+    (cooldowns && cooldowns.defaultSeconds) || 0,
+    ...Object.values((cooldowns && cooldowns.perCommand) || {}),
+    0
+  );
+  const cutoff = Date.now() - maxSeconds * 1000;
+  for (const [key, time] of lastUsed) {
+    if (time < cutoff) lastUsed.delete(key);
+  }
+}, COOLDOWN_CLEANUP_INTERVAL_MS);
+cooldownCleanupTimer.unref();
+
+// Returns true if `cmd` is allowed to run for `username` right now (and
+// records this as a use); false if it's still on cooldown. Silent by
+// design -- replying "you're on cooldown" would itself need its own
+// cooldown to avoid becoming the very spam it's meant to prevent.
+function checkCooldown(cmd, username) {
+  const cooldowns = configStore.get('cooldowns');
+  if (!cooldowns || !cooldowns.enabled) return true;
+  const seconds = (cooldowns.perCommand && cooldowns.perCommand[cmd]) ?? cooldowns.defaultSeconds ?? 0;
+  if (seconds <= 0) return true;
+
+  const key = `${cmd}:${username}`;
+  const now = Date.now();
+  const last = lastUsed.get(key);
+  if (last && now - last < seconds * 1000) return false;
+
+  lastUsed.set(key, now);
+  return true;
+}
 
 // message: { text, username, displayName, isMod, isBroadcaster }
 // ctx: { reply(text) }
@@ -80,13 +153,27 @@ async function handle(message, ctx) {
   const cmd = rawCmd.toLowerCase();
   if (!cmd) return false;
 
+  const custom = configStore.get('commands') || {};
+  const isBuiltin = Boolean(BUILTINS[cmd]);
+  const isCustom = Object.prototype.hasOwnProperty.call(custom, cmd);
+  if (!isBuiltin && !isCustom) return false;
+
   const logWho = `user=${message.username}`;
 
-  if (BUILTINS[cmd]) {
-    if (MOD_ONLY.has(cmd) && !message.isMod && !message.isBroadcaster) {
-      await safeReply(ctx, 'only mods can use that command.', `!${cmd}`, logWho);
-      return true;
-    }
+  if (isBuiltin && MOD_ONLY.has(cmd) && !message.isMod && !message.isBroadcaster) {
+    await safeReply(ctx, 'only mods can use that command.', `!${cmd}`, logWho);
+    return true;
+  }
+
+  // Mods/broadcaster bypass cooldowns entirely -- matches how moderation
+  // exempts them, and mods legitimately need to be able to re-run commands
+  // (like !so) back-to-back.
+  if (!message.isMod && !message.isBroadcaster && !checkCooldown(cmd, message.username)) {
+    logger.info('command-cooldown', `!${cmd} ${logWho} ignored (on cooldown)`);
+    return true;
+  }
+
+  if (isBuiltin) {
     let result;
     try {
       result = await BUILTINS[cmd](message, args);
@@ -98,13 +185,8 @@ async function handle(message, ctx) {
     return true;
   }
 
-  const custom = configStore.get('commands') || {};
-  if (Object.prototype.hasOwnProperty.call(custom, cmd)) {
-    await safeReply(ctx, custom[cmd], `!${cmd}`, logWho);
-    return true;
-  }
-
-  return false;
+  await safeReply(ctx, custom[cmd], `!${cmd}`, logWho);
+  return true;
 }
 
 async function safeReply(ctx, message, cmdLabel, logWho) {
@@ -116,4 +198,4 @@ async function safeReply(ctx, message, cmdLabel, logWho) {
   }
 }
 
-module.exports = { handle, BUILTINS };
+module.exports = { handle, BUILTINS, buildShoutoutMessage };
