@@ -7,9 +7,13 @@ const path = require('path');
 
 const LOG_PATH = path.join(__dirname, '..', 'logs', 'bot.log');
 
+let logDirEnsured = false;
+
 function ensureLogDir() {
+  if (logDirEnsured) return;
   const dir = path.dirname(LOG_PATH);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  logDirEnsured = true;
 }
 
 function write(level, category, message) {

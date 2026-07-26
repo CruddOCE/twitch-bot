@@ -11,6 +11,26 @@ function getUserState(username) {
   return userState.get(username);
 }
 
+// Without this, userState would grow forever -- one entry per distinct
+// chatter who's ever tripped a check, never freed. Periodically expire
+// stale recentMessages (independent of whether that user chats again,
+// since the array is otherwise only pruned lazily on their next message)
+// and drop any entry left with no warnings and no messages in its window --
+// those aren't holding any state worth keeping, just memory.
+const CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
+const cleanupTimer = setInterval(() => {
+  const rules = configStore.get('moderation');
+  const windowMs = ((rules && rules.spamFilter && rules.spamFilter.windowSeconds) || 30) * 1000;
+  const now = Date.now();
+  for (const [username, state] of userState) {
+    state.recentMessages = state.recentMessages.filter((m) => now - m.time < windowMs);
+    if (state.warnings === 0 && state.recentMessages.length === 0) {
+      userState.delete(username);
+    }
+  }
+}, CLEANUP_INTERVAL_MS);
+cleanupTimer.unref();
+
 const URL_REGEX = /\b((?:https?:\/\/)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/\S*)?)\b/i;
 
 function isAllowedLink(url, allowlist) {

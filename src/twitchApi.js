@@ -4,14 +4,9 @@
 
 let appToken = null;
 let tokenExpiry = 0;
+let tokenPromise = null;
 
-async function getAppToken() {
-  const clientId = process.env.TWITCH_CLIENT_ID;
-  const clientSecret = process.env.TWITCH_CLIENT_SECRET;
-  if (!clientId || !clientSecret) return null;
-
-  if (appToken && Date.now() < tokenExpiry) return appToken;
-
+async function fetchAppToken(clientId, clientSecret) {
   const res = await fetch('https://id.twitch.tv/oauth2/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -30,6 +25,25 @@ async function getAppToken() {
   appToken = data.access_token;
   tokenExpiry = Date.now() + (data.expires_in - 60) * 1000;
   return appToken;
+}
+
+async function getAppToken() {
+  const clientId = process.env.TWITCH_CLIENT_ID;
+  const clientSecret = process.env.TWITCH_CLIENT_SECRET;
+  if (!clientId || !clientSecret) return null;
+
+  if (appToken && Date.now() < tokenExpiry) return appToken;
+
+  // Cache the in-flight request itself, not just the resolved token --
+  // otherwise two !so calls landing close together (before the first
+  // fetch resolves) would both see no valid token yet and each fire a
+  // redundant request to Twitch's token endpoint.
+  if (!tokenPromise) {
+    tokenPromise = fetchAppToken(clientId, clientSecret).finally(() => {
+      tokenPromise = null;
+    });
+  }
+  return tokenPromise;
 }
 
 // Returns { displayName, login, game } or null if unavailable (missing
