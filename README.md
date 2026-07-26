@@ -187,15 +187,19 @@ touches your source code, config, or git history.
 - `src/configStore.js` — loads and hot-reloads `config/*.json`.
 - `src/alertServer.js` + `public/overlay.html` — the local alert/overlay
   server and the OBS Browser Source page it serves.
-- `src/ttsEngine.js` — server-side text-to-speech (Windows SAPI voices via
-  PowerShell), used by alerts and `!joke`/`!pp`/`!so`.
+- `src/ttsEngine.js` — server-side text-to-speech (Windows SAPI voices),
+  used by alerts and `!joke`/`!pp`/`!so`. Shells out to `tts-helper.exe`
+  rather than PowerShell (~3x faster per call — see `native/`).
 - `src/twitchAuth.js` / `src/twitchApi.js` — OAuth login flow and the Helix
   API client used by `!so`.
 - `scripts/` — setup wizard, token refresh, update, uninstall, and the OBS
   WebSocket integration.
-- `installer/` — C# source for the three compiled `.exe`s (control panel,
-  installer, uninstaller), compiled with the C# compiler that ships with
-  Windows — nothing downloaded.
+- `installer/` — C# source for the three compiled GUI `.exe`s (control
+  panel, installer, uninstaller).
+- `native/` — C# source for `tts-helper.exe`, the compiled speech
+  synthesizer `ttsEngine.js` calls out to. Both `installer/` and `native/`
+  compile with the C# compiler that ships with Windows — nothing
+  downloaded.
 - `test/run.js` — offline test suite (`npm test`), no live credentials
   needed.
 
