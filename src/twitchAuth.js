@@ -6,15 +6,23 @@ const REDIRECT_URI = `http://localhost:${PORT}/callback`;
 const SCOPES = ['chat:read', 'chat:edit', 'moderator:manage:banned_users', 'channel:manage:broadcast'];
 const TIMEOUT_MS = 5 * 60 * 1000;
 
+// A shared Client ID so most users can just sign in, without registering
+// their own Twitch app first. Safe to embed/share: Twitch's implicit-grant
+// flow (used here) needs no client secret, a Client ID isn't sensitive by
+// design (it's meant to be public, like an app identifier), and Twitch's
+// rate limits are per-user-token, not shared across everyone using the
+// same Client ID -- unlike, say, a Google Cloud project's API quota.
+// Anyone who wants their own app instead can still set their own
+// TWITCH_CLIENT_ID, which always takes precedence.
+const DEFAULT_CLIENT_ID = 'uzu5qgyqtfxjz1s4qydscfyd7ecio7';
+
 // Runs Twitch's implicit-grant OAuth flow via a local loopback server and
-// resolves with the raw access token (no "oauth:" prefix). Requires a free
-// app registered at https://dev.twitch.tv/console/apps with OAuth Redirect
-// URL set to REDIRECT_URI.
+// resolves with the raw access token (no "oauth:" prefix).
 //
 // options.onAuthUrl(url), if given, is called instead of the default
 // print-and-open behavior — lets callers (like the setup wizard) format
 // the link consistently with their own output.
-function getChatToken(clientId, options = {}) {
+function getChatToken(clientId = DEFAULT_CLIENT_ID, options = {}) {
   return new Promise((resolve, reject) => {
     if (!clientId) {
       reject(new Error('Missing Twitch Client ID.'));
@@ -80,4 +88,4 @@ function getChatToken(clientId, options = {}) {
   });
 }
 
-module.exports = { getChatToken, REDIRECT_URI, SCOPES };
+module.exports = { getChatToken, REDIRECT_URI, SCOPES, DEFAULT_CLIENT_ID };

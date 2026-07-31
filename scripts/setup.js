@@ -81,21 +81,33 @@ async function main() {
 
   console.log('\n=== Twitch setup ===');
 
-  step(1, 'Create a Twitch application');
-  console.log('Name it anything, set OAuth Redirect URL to http://localhost:3940/callback, category "Chat Bot".');
-  link('https://dev.twitch.tv/console/apps/create');
-  env.TWITCH_CLIENT_ID = await ask('Paste the Client ID');
-
-  step(2, 'Generate a Client Secret (optional — enables !so game lookups)');
-  console.log('On the same app\'s page, click "New Secret". Press Enter to skip this.');
-  link('https://dev.twitch.tv/console/apps');
-  const secret = await ask('Paste the Client Secret (optional)');
-  if (secret) env.TWITCH_CLIENT_SECRET = secret;
-
   env.TWITCH_BOT_USERNAME = await ask('Twitch username the bot logs in as');
   env.TWITCH_CHANNEL = (await ask('Your channel name (lowercase, no #)')).toLowerCase();
 
-  step(3, 'Log in as the bot account');
+  const useOwnApp = await confirm(
+    '\nUse your own Twitch app instead of the built-in one? (advanced -- most people can say no)',
+    false
+  );
+
+  if (useOwnApp) {
+    step(1, 'Create a Twitch application');
+    console.log('Name it anything, set OAuth Redirect URL to http://localhost:3940/callback, category "Chat Bot".');
+    link('https://dev.twitch.tv/console/apps/create');
+    env.TWITCH_CLIENT_ID = await ask('Paste the Client ID');
+
+    step(2, 'Generate a Client Secret (optional — enables !so game lookups)');
+    console.log('On the same app\'s page, click "New Secret". Press Enter to skip this.');
+    link('https://dev.twitch.tv/console/apps');
+    const secret = await ask('Paste the Client Secret (optional)');
+    if (secret) env.TWITCH_CLIENT_SECRET = secret;
+  } else {
+    env.TWITCH_CLIENT_ID = twitchAuth.DEFAULT_CLIENT_ID;
+    console.log('\nUsing the built-in shared Twitch app -- no app to register, just sign in below.');
+    console.log('(!so\'s optional "last streaming <game>" extra needs its own Client ID + Secret --');
+    console.log(' add TWITCH_CLIENT_SECRET to .env yourself later if you want that specific bonus.)');
+  }
+
+  step(useOwnApp ? 3 : 1, 'Log in as the bot account');
   console.log('A browser tab will open — log in with the BOT account (not your streamer account, unless you want it posting as you) and approve access.');
   await ask('Press Enter when you\'re ready');
 

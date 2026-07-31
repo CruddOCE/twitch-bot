@@ -93,18 +93,20 @@ If you'd rather not use the `.exe`s above:
    ```
    npm run setup
    ```
-   It installs dependencies, opens the exact Twitch developer console page
-   you need, and walks you through registering a free Twitch app and
-   logging in as your bot account. Everything is written to `.env` for you.
+   It installs dependencies, then just has you sign in with the bot
+   account via Twitch's own login page — no Twitch app to register
+   yourself, no Client ID to paste in. Everything is written to `.env` for
+   you. (Advanced: if you'd rather use your own Twitch app instead of the
+   built-in shared one, the wizard will ask and walk you through that too.)
 3. Start the bot:
    ```
    npm start
    ```
 
-Only need to read chat, not have the bot post/moderate? You still need a
-Twitch app (Client ID) for `npm run setup`/`npm run twitch-auth` to work,
-since Twitch's chat connection always requires a logged-in bot account —
-there's no anonymous/read-only mode like YouTube's API-key option.
+Twitch's chat connection always requires a logged-in bot account — there's
+no anonymous/read-only mode like some platforms' API-key options — but
+signing in is the only step; you're not creating or configuring anything
+on Twitch's developer console unless you specifically want your own app.
 
 ## Commands
 
