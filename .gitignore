@@ -3,3 +3,5 @@ node_modules/
 *.log
 logs/
 public/tts/
+# Local working notes / session state, not project documentation.
+HANDOFF.md
