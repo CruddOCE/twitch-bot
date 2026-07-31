@@ -40,30 +40,33 @@ engine, no YouTube setup, no Google Cloud project needed.
 
 ## Easiest: double-click install-twitch-bot.exe
 
-Double-click [`install-twitch-bot.exe`](install-twitch-bot.exe) — it opens a
-console window that installs dependencies, runs the setup wizard (see below)
-if you haven't configured `.env` yet, and then starts the bot. That's the
-whole process; no terminal typing required.
+Double-click [`install-twitch-bot.exe`](install-twitch-bot.exe) — it just
+opens [`twitch-bot-control.exe`](twitch-bot-control.exe), the control panel
+below. There's no separate installer or console wizard: the control panel
+itself walks you through everything the first time it's run.
 
-It's a tiny native launcher (source in
-[`installer/Program.cs`](installer/Program.cs), compiled with the C#
-compiler that ships with Windows — nothing downloaded) that just opens
-[`install-and-start.bat`](install-and-start.bat), which does the actual
-work. Requires Node.js to already be installed — if it isn't, the script
-opens the download page for you and stops so you can install it first, then
-run it again.
+## The control panel: twitch-bot-control.exe
 
-Re-running it later is safe: if `.env` already exists it'll ask whether you
-want to redo the setup wizard, then start the bot either way. It also
-creates (or refreshes) a **`twitch-bot` shortcut on your Desktop** pointing
-at the control panel below.
+This is the whole app — first-run setup and day-to-day use both happen
+here, via the Desktop shortcut or by running it directly.
 
-## Day-to-day: twitch-bot-control.exe
+**First run**, it shows a setup screen with three steps, each with its own
+status and action button:
+1. **Node.js** — checked automatically; if it's missing, click **Download
+   Node.js**, install it, then **Recheck**.
+2. **Install Dependencies** — one click, runs `npm install` and streams the
+   output live.
+3. **Connect your Twitch account** — enter the bot's username and your
+   channel name, click **Connect Twitch Account**, and sign in via Twitch's
+   own login page in your browser. No Twitch Developer Console, no Client
+   ID to paste in — it uses a built-in shared app.
 
-Once you've set up once, use
-[`twitch-bot-control.exe`](twitch-bot-control.exe) (via the Desktop shortcut,
-or directly) to turn the bot on and off around your streams — a proper
-dashboard, not a bare console window:
+Once all three are done, it switches automatically to the dashboard —
+nothing to restart. Re-opening the app later skips straight to the
+dashboard since everything's already set up.
+
+**Day-to-day**, the dashboard is a proper control panel, not a bare console
+window:
 
 - **Live Chat panel** — every message shows up as it arrives, with a
   timestamp, a `[MOD]`/`[HOST]` badge where it applies, and each username
@@ -83,6 +86,10 @@ dashboard, not a bare console window:
 
 Closing the window stops the bot if it's running, so there's no separate
 "turn it off" step to remember after a stream.
+
+Both `.exe`s (source in [`installer/`](installer)) and the TTS helper
+(source in [`native/`](native)) are compiled with the C# compiler that
+ships with Windows — nothing downloaded to build them.
 
 ## Manual / command-line setup
 
@@ -241,14 +248,15 @@ touches your source code, config, or git history.
   rather than PowerShell (~3x faster per call — see `native/`).
 - `src/twitchAuth.js` / `src/twitchApi.js` — OAuth login flow and the Helix
   API client used by `!so`/`!title`/`!game`.
-- `scripts/` — setup wizard, token refresh, update, uninstall, and the OBS
-  WebSocket integration.
+- `scripts/` — setup wizard, token refresh, update, uninstall, the OBS
+  WebSocket integration, and `connectAccount.js` (the non-interactive
+  sign-in step the control panel's setup screen runs).
 - `installer/` — C# source for the three compiled GUI `.exe`s (control
   panel, installer, uninstaller).
-- `native/` — C# source for `tts-helper.exe`, the compiled speech
-  synthesizer `ttsEngine.js` calls out to. Both `installer/` and `native/`
-  compile with the C# compiler that ships with Windows — nothing
-  downloaded.
+- `native/` — C# source for `tts-helper.exe` (the compiled speech
+  synthesizer `ttsEngine.js` calls out to) and the app icon. Both
+  `installer/` and `native/` compile with the C# compiler that ships with
+  Windows — nothing downloaded.
 - `test/run.js` — offline test suite (`npm test`), no live credentials
   needed.
 

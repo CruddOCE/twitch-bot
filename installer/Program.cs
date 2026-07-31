@@ -1,38 +1,37 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Windows.Forms;
 
-// Tiny launcher: double-clicking this .exe opens install-and-start.bat in
-// a normal console window, in this .exe's own folder. All the real logic
-// (checking for Node.js, npm install, the setup wizard, npm start) lives
-// in that batch file - this program only exists so there's a literal
-// double-clickable .exe with no console-flag/PowerShell-execution-policy
-// friction for the user.
+// Tiny launcher: double-clicking this .exe just opens twitch-bot-control.exe
+// in this program's own folder. The control panel is fully self-contained
+// now -- it walks you through checking for Node.js, installing
+// dependencies, and connecting your Twitch account all from its own UI,
+// so there's no separate batch-file wizard to run first.
 class Launcher
 {
+    [STAThread]
     static int Main()
     {
         string exeDir = AppDomain.CurrentDomain.BaseDirectory;
-        string batPath = Path.Combine(exeDir, "install-and-start.bat");
+        string controlExe = Path.Combine(exeDir, "twitch-bot-control.exe");
 
-        if (!File.Exists(batPath))
+        if (!File.Exists(controlExe))
         {
-            Console.WriteLine("install-and-start.bat was not found next to this program.");
-            Console.WriteLine("Expected it at: " + batPath);
-            Console.WriteLine("Press any key to exit...");
-            Console.ReadKey();
+            MessageBox.Show(
+                "twitch-bot-control.exe was not found next to this program.\nExpected it at: " + controlExe,
+                "twitch-bot",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
             return 1;
         }
 
-        var psi = new ProcessStartInfo
+        Process.Start(new ProcessStartInfo
         {
-            FileName = "cmd.exe",
-            Arguments = "/c \"" + batPath + "\"",
+            FileName = controlExe,
             WorkingDirectory = exeDir,
             UseShellExecute = true,
-        };
-
-        Process.Start(psi);
+        });
         return 0;
     }
 }
