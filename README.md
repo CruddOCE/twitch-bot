@@ -5,6 +5,34 @@ on your own machine (no hosting required). This is a leaner, Twitch-only
 sibling of [stream-bot](https://github.com/CruddOCE/stream-bot): same core
 engine, no YouTube setup, no Google Cloud project needed.
 
+## Status: in development
+
+**This is a personal project under active development, and parts of it have
+not been tested on a real stream yet.** It works, and the offline test suite
+passes, but "passes its tests" and "proven live in front of viewers" are not
+the same thing. Treat it accordingly if you run it on your own channel.
+
+Specifically, these are known to be unverified rather than known to work:
+
+- **Spoken alerts inside OBS.** The popup and chime are confirmed working,
+  and the server-side speech pipeline is confirmed working in an ordinary
+  browser. Whether the audio is actually audible inside OBS's Browser Source
+  has never been confirmed by ear.
+- **Cooldowns and timers.** Both are unit tested and the bot starts cleanly
+  with them wired in, but no real viewer has ever triggered a cooldown and no
+  timer has ever fired during a live stream. Timers are off by default in
+  `config/timers.json`.
+- **The control panel's running state.** The uptime badge, the Stop Bot
+  button and the live overlay connection readout only appear once the bot is
+  actually connected, and have not been observed in that state.
+- **The Reconnect button** on setup step 3. New code, never run.
+
+`!title` and `!game` additionally require a token carrying the
+`channel:manage:broadcast` scope, and only work when the bot account is the
+broadcaster, since Twitch only lets a channel's own token change its info.
+
+Issues and pull requests are welcome, but please assume rough edges.
+
 ## What it does
 
 - Connects to your Twitch channel's chat.
