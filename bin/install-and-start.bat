@@ -1,6 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
-cd /d "%~dp0"
+cd /d "%~dp0.."
 
 echo ============================================
 echo   twitch-bot installer / launcher
@@ -32,7 +32,7 @@ if %errorlevel% neq 0 (
 )
 
 echo Creating a desktop shortcut to the control panel...
-powershell -NoProfile -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('%USERPROFILE%\Desktop\twitch-bot.lnk'); $s.TargetPath='%~dp0twitch-bot-control.exe'; $s.WorkingDirectory='%~dp0'; $s.IconLocation='%~dp0twitch-bot-control.exe,0'; $s.Description='twitch-bot control panel - start/stop the bot, live chat, OBS setup'; $s.Save()" >nul 2>nul
+powershell -NoProfile -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('%USERPROFILE%\Desktop\twitch-bot.lnk'); $s.TargetPath='%~dp0twitch-bot-control.exe'; $s.WorkingDirectory='%CD%'; $s.IconLocation='%~dp0twitch-bot-control.exe,0'; $s.Description='twitch-bot control panel - start/stop the bot, live chat, OBS setup'; $s.Save()" >nul 2>nul
 
 if not exist ".env" (
   echo.

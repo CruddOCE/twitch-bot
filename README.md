@@ -53,7 +53,7 @@ Issues and pull requests are welcome, but please assume rough edges.
   Windows' built-in voices (randomly picked each time) rather than relying on
   the browser's own text-to-speech, since OBS's Browser Source usually has no
   TTS voices available to it at all (a limitation of its embedded browser).
-- A dark **control panel** (`twitch-bot-control.exe`) for day-to-day use:
+- A dark **control panel** (`bin/twitch-bot-control.exe`) for day-to-day use:
   Start/Stop, a live color-coded chat feed, an activity log, a live overlay
   connection readout, and one-click OBS setup and test alerts. Styled with
   the workspace design system in `../ui-kit`. See below.
@@ -69,12 +69,14 @@ Issues and pull requests are welcome, but please assume rough edges.
 
 ## Easiest: double-click install-twitch-bot.exe
 
-Double-click [`install-twitch-bot.exe`](install-twitch-bot.exe). It just
-opens [`twitch-bot-control.exe`](twitch-bot-control.exe), the control panel
+Double-click [`install-twitch-bot.exe`](install-twitch-bot.exe). It sits at
+the top level on its own, so it's the one file here meant to be run
+directly. It just opens
+[`bin/twitch-bot-control.exe`](bin/twitch-bot-control.exe), the control panel
 below. There's no separate installer or console wizard: the control panel
 itself walks you through everything the first time it's run.
 
-## The control panel: twitch-bot-control.exe
+## The control panel: bin/twitch-bot-control.exe
 
 This is the whole app. First-run setup and day-to-day use both happen
 here, via the Desktop shortcut or by running it directly.
@@ -274,7 +276,8 @@ nothing is lost, you just resolve it manually via `git status`).
 
 ## Uninstalling
 
-Double-click [`uninstall-twitch-bot.exe`](uninstall-twitch-bot.exe), or run:
+Double-click [`bin/uninstall-twitch-bot.exe`](bin/uninstall-twitch-bot.exe),
+or run:
 ```
 npm run uninstall
 ```
@@ -297,16 +300,23 @@ touches your source code, config, or git history.
 - `src/alertServer.js` + `public/overlay.html`: the local alert/overlay
   server and the OBS Browser Source page it serves.
 - `src/ttsEngine.js`: server-side text-to-speech (Windows SAPI voices),
-  used by alerts and `!joke`/`!pp`/`!so`. Shells out to `tts-helper.exe`
+  used by alerts and `!joke`/`!pp`/`!so`. Shells out to `bin/tts-helper.exe`
   rather than PowerShell (~3x faster per call, see `native/`).
 - `src/twitchAuth.js` / `src/twitchApi.js`: OAuth login flow and the Helix
   API client used by `!so`/`!title`/`!game`.
 - `scripts/`: setup wizard, token refresh, update, uninstall, the OBS
   WebSocket integration, and `connectAccount.js` (the non-interactive
   sign-in step the control panel's setup screen runs).
+- `bin/`: the compiled binaries and the batch entry points, kept out of the
+  project root so the root stays readable. `install-twitch-bot.exe` is the
+  deliberate exception and stays at the top level, since a fresh download
+  needs exactly one obvious thing to double-click. Note that the control
+  panel derives the project root as its own parent directory, so it has to
+  sit exactly one level down; moving `bin/` deeper breaks the bot launch,
+  the setup wizard and the update path together.
 - `installer/`: C# source for the three compiled GUI `.exe`s (control
-  panel, installer, uninstaller).
-- `native/`: C# source for `tts-helper.exe` (the compiled speech
+  panel, installer, uninstaller), which build into `bin/`.
+- `native/`: C# source for `bin/tts-helper.exe` (the compiled speech
   synthesizer `ttsEngine.js` calls out to) and the app icon. Both
   `installer/` and `native/` compile with the C# compiler that ships with
   Windows, nothing downloaded.

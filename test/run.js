@@ -45,11 +45,11 @@ const state = require('../src/state');
 // other batch files like npm.cmd). Catch that regression here instead of
 // discovering it by double-clicking a broken installer.
 function checkBatchFileLineEndings() {
-  const root = path.join(__dirname, '..');
-  const batFiles = fs.readdirSync(root).filter((f) => f.endsWith('.bat'));
+  const binDir = path.join(__dirname, '..', 'bin');
+  const batFiles = fs.readdirSync(binDir).filter((f) => f.endsWith('.bat'));
   assert.ok(batFiles.length > 0, 'expected at least one .bat file to check');
   for (const file of batFiles) {
-    const text = fs.readFileSync(path.join(root, file), 'utf8');
+    const text = fs.readFileSync(path.join(binDir, file), 'utf8');
     const hasLoneLF = /(?<!\r)\n/.test(text);
     assert.ok(!hasLoneLF, `${file} has LF-only line endings somewhere; must be CRLF throughout for cmd.exe to parse it reliably`);
   }

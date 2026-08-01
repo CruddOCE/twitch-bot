@@ -407,7 +407,11 @@ class MainForm : Form
 
     public MainForm()
     {
-        rootDir = AppDomain.CurrentDomain.BaseDirectory;
+        // This exe ships in bin/ alongside the other binaries, so the project
+        // root (package.json, .env, scripts/, node_modules/) is one level up.
+        // Everything below resolves off rootDir, so getting this wrong breaks
+        // the bot launch, the setup wizard and the update path all at once.
+        rootDir = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, ".."));
 
         Text = "twitch-bot";
         Width = 940;
@@ -1416,7 +1420,7 @@ class MainForm : Form
     {
         string nodeExe = ResolveNodePath();
         string updateScript = Path.Combine(rootDir, "scripts", "update.js");
-        string controlExe = Path.Combine(rootDir, "twitch-bot-control.exe");
+        string controlExe = Path.Combine(rootDir, "bin", "twitch-bot-control.exe");
         int myPid = Process.GetCurrentProcess().Id;
 
         string watcherCommand =

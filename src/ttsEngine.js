@@ -19,7 +19,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 const TTS_DIR = path.join(__dirname, '..', 'public', 'tts');
-const HELPER_PATH = path.join(__dirname, '..', 'tts-helper.exe');
+const HELPER_PATH = path.join(__dirname, '..', 'bin', 'tts-helper.exe');
 const FILE_LIFETIME_MS = 30000;
 
 let cachedVoices = null;
