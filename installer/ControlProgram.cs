@@ -6,6 +6,7 @@ using System.Drawing.Drawing2D;
 using System.IO;
 using System.Net.Http;
 using System.Text;
+using Microsoft.Win32;
 using System.Text.RegularExpressions;
 using System.Windows.Forms;
 
@@ -195,6 +196,80 @@ class Dot : Panel
     }
 }
 
+// The kit's .checkbox-row input: an empty bordered square when off, an
+// accent fill with a dark tick when on. Owner-drawn because a WinForms
+// CheckBox with FlatStyle.Flat paints its unchecked box as a solid block
+// of ForeColor, which reads as switched on when it is switched off.
+class KitCheck : Control
+{
+    private bool checkedState;
+    private bool hovering;
+
+    public event EventHandler CheckedChanged;
+
+    public KitCheck()
+    {
+        Size = new Size(15, 15);
+        BackColor = Theme.Surface0;
+        Cursor = Cursors.Hand;
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+    }
+
+    public bool Checked
+    {
+        get { return checkedState; }
+        set
+        {
+            if (checkedState == value) return;
+            checkedState = value;
+            Invalidate();
+            if (CheckedChanged != null) CheckedChanged(this, EventArgs.Empty);
+        }
+    }
+
+    // Lets the initial state be restored from the registry without the
+    // restore itself counting as a change the handler has to act on.
+    public void SetCheckedSilently(bool value)
+    {
+        checkedState = value;
+        Invalidate();
+    }
+
+    public void Toggle() { Checked = !Checked; }
+
+    protected override void OnMouseEnter(EventArgs e) { hovering = true; Invalidate(); base.OnMouseEnter(e); }
+    protected override void OnMouseLeave(EventArgs e) { hovering = false; Invalidate(); base.OnMouseLeave(e); }
+    protected override void OnClick(EventArgs e) { Toggle(); base.OnClick(e); }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using (var back = new SolidBrush(BackColor)) e.Graphics.FillRectangle(back, ClientRectangle);
+
+        var rect = new Rectangle(0, 0, Width - 1, Height - 1);
+        using (var path = Theme.RoundedRect(rect, 3))
+        {
+            if (checkedState)
+            {
+                using (var fill = new SolidBrush(Theme.Accent)) e.Graphics.FillPath(fill, path);
+            }
+            using (var pen = new Pen(checkedState ? Theme.Accent : (hovering ? Theme.BorderStrong : Theme.Border)))
+            {
+                e.Graphics.DrawPath(pen, path);
+            }
+        }
+
+        if (!checkedState) return;
+        using (var tick = new Pen(Theme.TextOnAccent, 2))
+        {
+            e.Graphics.DrawLines(tick, new[]
+            {
+                new Point(3, 7), new Point(6, 10), new Point(11, 4),
+            });
+        }
+    }
+}
+
 // Rounded square carrying a letter or number: the rail's brand mark and
 // the setup steps' numbering.
 class Badge : Panel
@@ -333,7 +408,7 @@ class NavItem : Button
 
 class MainForm : Form
 {
-    private const string AppVersion = "0.5.1";
+    private const string AppVersion = "0.5.15";
     private const int RailWidth = 232;
     private const int TopBarHeight = 64;
 
@@ -362,7 +437,9 @@ class MainForm : Form
     private TextBox obsPasswordBox;
     private KitButton obsButton;
     private KitButton testAlertButton;
+    private KitButton reloadOverlaysButton;
     private KitButton updateButton;
+    private KitCheck startWithWindowsBox;
     private Label channelValue;
     private Label portValue;
     private Label overlayValue;
@@ -551,7 +628,12 @@ class MainForm : Form
 
         testAlertButton = new KitButton("Test Alert", BtnKind.Ghost, Theme.Surface0);
         testAlertButton.Size = new Size(inner, 32);
+        testAlertButton.Margin = new Padding(0, 0, 0, 6);
         testAlertButton.Click += OnTestAlertClick;
+
+        reloadOverlaysButton = new KitButton("Reload Overlays", BtnKind.Ghost, Theme.Surface0);
+        reloadOverlaysButton.Size = new Size(inner, 32);
+        reloadOverlaysButton.Click += OnReloadOverlaysClick;
 
         top.Controls.Add(brand);
         top.Controls.Add(navDashboard);
@@ -560,6 +642,7 @@ class MainForm : Form
         top.Controls.Add(obsPassHost);
         top.Controls.Add(obsButton);
         top.Controls.Add(testAlertButton);
+        top.Controls.Add(reloadOverlaysButton);
 
         var bottom = new FlowLayoutPanel
         {
@@ -592,6 +675,7 @@ class MainForm : Form
         };
 
         bottom.Controls.Add(readout);
+        bottom.Controls.Add(BuildStartWithWindowsRow(inner));
         bottom.Controls.Add(updateButton);
         bottom.Controls.Add(versionPin);
 
@@ -623,6 +707,35 @@ class MainForm : Form
         row.Controls.Add(l);
         row.Controls.Add(v);
         valueLabel = v;
+        return row;
+    }
+
+    // The kit's .checkbox-row: tick, gap, body text. The caption is its own
+    // Label so the whole row is clickable rather than just a 15px square.
+    private Panel BuildStartWithWindowsRow(int width)
+    {
+        var row = new Panel { Width = width, Height = 22, BackColor = Theme.Surface0, Margin = new Padding(10, 0, 0, 10) };
+
+        startWithWindowsBox = new KitCheck { Location = new Point(0, 3) };
+
+        var caption = new Label
+        {
+            Text = "Start with Windows",
+            Font = Theme.Small,
+            ForeColor = Theme.Text,
+            AutoSize = true,
+            Location = new Point(23, 3),
+            Cursor = Cursors.Hand,
+        };
+        caption.Click += (s, e) => startWithWindowsBox.Toggle();
+
+        // Restore silently, so reading the registry does not immediately
+        // write it back.
+        startWithWindowsBox.SetCheckedSilently(SyncStartWithWindowsState());
+        startWithWindowsBox.CheckedChanged += OnStartWithWindowsChanged;
+
+        row.Controls.Add(caption);
+        row.Controls.Add(startWithWindowsBox);
         return row;
     }
 
@@ -1367,6 +1480,103 @@ class MainForm : Form
         finally
         {
             testAlertButton.Enabled = true;
+        }
+    }
+
+    // Tells every connected browser source to reload itself, which is the
+    // standard fix for an overlay that has gone stale or stopped rendering.
+    // Unlike Test Alert this is safe to press on stream: nothing is shown
+    // to viewers, the page just reconnects.
+    private async void OnReloadOverlaysClick(object sender, EventArgs e)
+    {
+        if (botProcess == null)
+        {
+            AppendLog("Start the bot first, then try Reload Overlays -- the alert server only runs while the bot is running.");
+            return;
+        }
+
+        reloadOverlaysButton.Enabled = false;
+        string port = GetEnvValue("ALERT_SERVER_PORT", "8090");
+
+        try
+        {
+            string response = await Http.GetStringAsync("http://localhost:" + port + "/reload-overlays");
+            if (response.Contains("\"connectedOverlays\":0"))
+            {
+                AppendLog("Nothing to reload -- no OBS overlay is connected. Add http://localhost:" + port + "/overlay.html as a Browser Source first.");
+            }
+            else
+            {
+                AppendLog("Reload sent -- the overlay should reconnect within a second or two.");
+            }
+        }
+        catch (Exception ex)
+        {
+            AppendLog("Could not reach the alert server: " + ex.Message);
+        }
+        finally
+        {
+            reloadOverlaysButton.Enabled = true;
+        }
+    }
+
+    // ---------- Start with Windows ----------
+
+    private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    private const string RunValueName = "twitch-bot";
+
+    // Reads the current Run entry and reports whether it is set. Repoints a
+    // stale one at the same time: the entry stores an absolute path, so a
+    // moved or renamed install would otherwise keep a dead entry that only
+    // announces itself at the next reboot.
+    private bool SyncStartWithWindowsState()
+    {
+        try
+        {
+            using (var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, true))
+            {
+                if (key == null) return false;
+                var existing = key.GetValue(RunValueName) as string;
+                if (existing == null) return false;
+                string wanted = StartupCommand();
+                if (existing != wanted) key.SetValue(RunValueName, wanted);
+                return true;
+            }
+        }
+        catch (Exception)
+        {
+            // A locked-down or policy-managed Run key is not worth failing
+            // startup over; the toggle just reports off until pressed.
+            return false;
+        }
+    }
+
+    private string StartupCommand()
+    {
+        return "\"" + Application.ExecutablePath + "\"";
+    }
+
+    private void OnStartWithWindowsChanged(object sender, EventArgs e)
+    {
+        bool wanted = startWithWindowsBox.Checked;
+        try
+        {
+            using (var key = Registry.CurrentUser.CreateSubKey(RunKeyPath))
+            {
+                if (wanted) key.SetValue(RunValueName, StartupCommand());
+                else key.DeleteValue(RunValueName, false);
+            }
+            AppendLog(wanted
+                ? "twitch-bot will now open when you sign in to Windows. It opens this panel only -- press Start Bot as usual."
+                : "twitch-bot will no longer open when you sign in to Windows.");
+        }
+        catch (Exception ex)
+        {
+            AppendLog("Could not change the Windows startup setting: " + ex.Message);
+            // Leave the tick showing what is actually true rather than what
+            // was asked for. Silently, or the correction re-enters this
+            // handler and undoes itself.
+            startWithWindowsBox.SetCheckedSilently(!wanted);
         }
     }
 

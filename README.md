@@ -5,12 +5,18 @@ on your own machine (no hosting required). This is a leaner, Twitch-only
 sibling of [stream-bot](https://github.com/CruddOCE/stream-bot): same core
 engine, no YouTube setup, no Google Cloud project needed.
 
-## Status: in development
+## Status: 0.5.15, undergoing testing
 
 **This is a personal project under active development, and parts of it have
 not been tested on a real stream yet.** It works, and the offline test suite
 passes, but "passes its tests" and "proven live in front of viewers" are not
 the same thing. Treat it accordingly if you run it on your own channel.
+
+**0.5.15 specifically is a testing release.** It adds Reload Overlays and
+Start with Windows to the control panel, and neither has been used on a live
+stream. What was and was not checked is listed below, and in more detail in
+[`FEATURES-TO-ADD.md`](FEATURES-TO-ADD.md), which is the build-ordered
+backlog these came from.
 
 Specifically, these are known to be unverified rather than known to work:
 
@@ -26,6 +32,14 @@ Specifically, these are known to be unverified rather than known to work:
   button and the live overlay connection readout only appear once the bot is
   actually connected, and have not been observed in that state.
 - **The Reconnect button** on setup step 3. New code, never run.
+- **The Reload Overlays button.** The server endpoint and the overlay's
+  handling of it are confirmed working against a real browser source, but
+  the control panel's button has never been pressed against a running bot,
+  and nothing has been reloaded inside OBS itself.
+- **Turning Start with Windows on or off.** The panel correctly reads the
+  registry entry at startup and repoints a stale one, both confirmed, but
+  writing the entry by clicking the box has not been exercised, and no
+  Windows sign-in has been observed launching it.
 
 `!title` and `!game` additionally require a token carrying the
 `channel:manage:broadcast` scope, and only work when the bot account is the
@@ -110,14 +124,22 @@ The **left rail** holds:
 - **Dashboard** and **Setup** navigation.
 - **OBS**: your OBS WebSocket password (Tools > WebSocket Server Settings >
   Show Connect Info), plus **Add Browser Source**, which adds the overlay to
-  your current scene automatically with audio already routed, and **Test
+  your current scene automatically with audio already routed, **Test
   Alert**, which fires a real alert and spoken test message through the
   running bot's alert server so you can confirm OBS is connected before
-  going live.
+  going live, and **Reload Overlays**, which force-refreshes every connected
+  browser source. Reload is the fix for an overlay that has gone stale or
+  stopped rendering, and unlike Test Alert it is safe to press mid-stream:
+  viewers see nothing, the page just reconnects.
 - A **readout** of the channel, the alert server port, and how many overlays
   are currently connected. The overlay count is polled from the running bot
   every 5 seconds, so plugging the Browser Source into OBS shows up here
   without having to fire a test alert to find out.
+- **Start with Windows**: opens this panel automatically when you sign in.
+  It opens the panel only, not the bot, so pressing Start Bot stays a
+  deliberate choice rather than something that happens at every boot. The
+  setting is a `HKCU\...\Run` registry entry rather than a Startup folder
+  shortcut, so unticking the box removes it completely.
 - **Update**: pulls the latest version from GitHub. Since Windows won't let
   git overwrite a running `.exe`, clicking this closes the app, updates, and
   reopens it automatically (a console window shows progress in between).
@@ -263,6 +285,12 @@ immediately.
 3. To confirm everything's wired up before going live, visit
    `http://localhost:8090/test-alert` while the bot is running. It fires a
    test alert + chime at any connected overlay.
+4. If an overlay goes stale or stops rendering mid-stream, visit
+   `http://localhost:8090/reload-overlays` (or click **Reload Overlays** in
+   the control panel). Every connected browser source reloads itself and
+   reconnects, with nothing shown to viewers. This beats OBS's own Refresh
+   button when several scenes each carry a copy of the overlay, since they
+   all get it at once.
 
 ## Updating
 

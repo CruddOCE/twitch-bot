@@ -36,6 +36,17 @@ function start() {
     res.json({ ok: true, connectedOverlays: getConnectedCount(), port: listeningPort });
   });
 
+  // The standard fix for a browser source that has gone stale or stopped
+  // rendering, without going near OBS itself. Reloading from here also
+  // beats OBS's own Refresh button when several scenes each carry a copy
+  // of the overlay, since every connected client gets it at once.
+  app.get('/reload-overlays', (req, res) => {
+    const connected = getConnectedCount();
+    broadcast({ kind: 'reload' });
+    logger.action('reload-overlays', `Reload sent to ${connected} overlay(s)`);
+    res.json({ ok: true, connectedOverlays: connected });
+  });
+
   server = http.createServer(app);
   wss = new WebSocket.Server({ server });
 

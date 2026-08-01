@@ -192,6 +192,8 @@
         if (data.kind === 'alert') {
           queue.push(data);
           processQueue();
+        } else if (data.kind === 'reload') {
+          location.reload();
         } else if (data.kind === 'tts') {
           if (data.url) {
             playAudioUrl(data.url);

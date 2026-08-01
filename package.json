@@ -1,6 +1,6 @@
 {
   "name": "twitch-bot",
-  "version": "0.5.1",
+  "version": "0.5.15",
   "private": true,
   "description": "Local Twitch live chat bot with custom commands and auto-moderation",
   "main": "index.js",
