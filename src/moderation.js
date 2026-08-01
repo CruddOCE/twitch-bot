@@ -1,6 +1,6 @@
 const configStore = require('./configStore');
 
-// Per-user in-memory state. Cleared on restart by design — this is meant
+// Per-user in-memory state. Cleared on restart by design, since this is meant
 // to catch bursts within a session, not to be a persistent ban history.
 const userState = new Map();
 

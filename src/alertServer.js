@@ -28,6 +28,14 @@ function start() {
     res.json({ ok: true, connectedOverlays: connected });
   });
 
+  // Read-only counterpart to /test-alert, polled by the control panel so
+  // its "Overlays" readout reflects reality continuously. Kept separate
+  // because /test-alert has side effects (it fires an alert and speaks),
+  // so it can't be used to answer "is anything connected right now?".
+  app.get('/status', (req, res) => {
+    res.json({ ok: true, connectedOverlays: getConnectedCount(), port: listeningPort });
+  });
+
   server = http.createServer(app);
   wss = new WebSocket.Server({ server });
 
@@ -67,7 +75,7 @@ function start() {
   heartbeat.unref();
 
   server.listen(port, () => {
-    console.log(`[alerts] Overlay running at http://localhost:${port}/overlay.html — add this as an OBS Browser Source`);
+    console.log(`[alerts] Overlay running at http://localhost:${port}/overlay.html (add this as an OBS Browser Source)`);
     logger.action('alert-server', `Listening at http://localhost:${port}/overlay.html`);
   });
 

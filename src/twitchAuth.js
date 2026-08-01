@@ -20,7 +20,7 @@ const DEFAULT_CLIENT_ID = 'uzu5qgyqtfxjz1s4qydscfyd7ecio7';
 // resolves with the raw access token (no "oauth:" prefix).
 //
 // options.onAuthUrl(url), if given, is called instead of the default
-// print-and-open behavior — lets callers (like the setup wizard) format
+// print-and-open behavior, letting callers (like the setup wizard) format
 // the link consistently with their own output.
 function getChatToken(clientId = DEFAULT_CLIENT_ID, options = {}) {
   return new Promise((resolve, reject) => {
@@ -39,7 +39,7 @@ function getChatToken(clientId = DEFAULT_CLIENT_ID, options = {}) {
     const server = http.createServer((req, res) => {
       if (req.url.startsWith('/callback')) {
         // Twitch returns the token in the URL fragment, which never reaches
-        // the server directly — serve a tiny page that reads it client-side
+        // the server directly, so serve a tiny page that reads it client-side
         // and posts it back to us.
         res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end(`<!doctype html><html><body>
@@ -60,7 +60,7 @@ function getChatToken(clientId = DEFAULT_CLIENT_ID, options = {}) {
         clearTimeout(timeout);
         server.close();
         if (token) resolve(token);
-        else reject(new Error('No token received — did you approve the app in the browser?'));
+        else reject(new Error('No token received. Did you approve the app in the browser?'));
       } else {
         res.writeHead(404);
         res.end();

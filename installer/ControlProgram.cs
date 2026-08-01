@@ -6,6 +6,7 @@ using System.Drawing.Drawing2D;
 using System.IO;
 using System.Net.Http;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Windows.Forms;
 
 // Self-contained control panel: on first run, walks you through getting
@@ -15,6 +16,12 @@ using System.Windows.Forms;
 // with per-user coloring, see an activity log, connect OBS, and self-
 // update. Closing the window stops the bot if it's running, so there's
 // no separate "turn it off" step to remember after a stream.
+//
+// The visual language is the workspace ui-kit (../ui-kit), ported by
+// hand: WinForms cannot consume a stylesheet, so Theme below mirrors
+// tokens.css and the component classes here mirror components.css. When
+// a token changes in the kit, change it here too or the panel drifts
+// away from the other tools on the desktop.
 class ControlApp
 {
     [STAThread]
@@ -26,57 +33,65 @@ class ControlApp
     }
 }
 
-// Centralized dark palette so every control matches.
+// Mirror of ui-kit/tokens.css. Names match the CSS custom properties so
+// the two can be diffed by eye.
 static class Theme
 {
-    public static readonly Color Background = Color.FromArgb(24, 24, 27);
-    public static readonly Color Panel = Color.FromArgb(32, 32, 36);
-    public static readonly Color Header = Color.FromArgb(18, 18, 20);
-    public static readonly Color Border = Color.FromArgb(50, 50, 55);
-    public static readonly Color Text = Color.FromArgb(230, 230, 235);
-    public static readonly Color MutedText = Color.FromArgb(150, 150, 160);
-    public static readonly Color Accent = Color.FromArgb(145, 70, 255);
-    public static readonly Color AccentDark = Color.FromArgb(105, 50, 190);
-    public static readonly Color Running = Color.FromArgb(87, 242, 135);
-    public static readonly Color Stopped = Color.FromArgb(255, 92, 92);
-    public static readonly Color Pending = Color.FromArgb(255, 190, 90);
-    public static readonly Color Secondary = Color.FromArgb(55, 55, 62);
+    // Surfaces: five steps, deepest to most raised.
+    public static readonly Color Surface0 = FromHex("0e1015");      // rail, top bar
+    public static readonly Color Surface1 = FromHex("14161c");      // content column
+    public static readonly Color Surface2 = FromHex("1c1f28");      // panel, card
+    public static readonly Color Surface3 = FromHex("242833");      // raised: active nav, hover
+    public static readonly Color SurfaceInset = FromHex("0a0c11");  // inputs
 
-    public static Font Title = new Font("Segoe UI", 14, FontStyle.Bold);
-    public static Font Subtitle = new Font("Segoe UI", 9.5F);
-    public static Font Body = new Font("Segoe UI", 9.5F);
-    public static Font BodyBold = new Font("Segoe UI", 9.5F, FontStyle.Bold);
-    public static Font Small = new Font("Segoe UI", 8.5F);
-    public static Font SmallBold = new Font("Segoe UI", 8.5F, FontStyle.Bold);
+    public static readonly Color Border = FromHex("2c303c");
+    public static readonly Color BorderStrong = FromHex("3a3f4e");
+
+    public static readonly Color Text = FromHex("e8e9ee");
+    public static readonly Color TextMuted = FromHex("9198a8");
+    public static readonly Color TextDim = FromHex("646b7c");
+    public static readonly Color TextOnAccent = FromHex("0a1424");
+
+    // One accent, spent only on active state and the primary action.
+    public static readonly Color Accent = FromHex("6ea8fe");
+    public static readonly Color AccentHover = FromHex("8ab9ff");
+    public static readonly Color AccentPress = FromHex("5b93e6");
+
+    public static readonly Color Ok = FromHex("4ecb71");
+    public static readonly Color Warn = FromHex("ffb454");
+    public static readonly Color Danger = FromHex("f2555a");
+
+    // Radii. The kit defaults to Epic's softness rather than the square
+    // corners of the other two references, because these are desktop
+    // panels rather than in-game HUDs.
+    public const int RadiusMd = 6;
+    public const int RadiusLg = 10;
+
+    public static Font H1 = new Font("Segoe UI", 16F, FontStyle.Bold);
+    public static Font H2 = new Font("Segoe UI", 11F, FontStyle.Bold);
+    public static Font Body = new Font("Segoe UI", 10F);
+    public static Font BodyBold = new Font("Segoe UI", 10F, FontStyle.Bold);
+    public static Font Small = new Font("Segoe UI", 9F);
+    public static Font SmallBold = new Font("Segoe UI", 9F, FontStyle.Bold);
+    public static Font Micro = new Font("Segoe UI", 8.25F, FontStyle.Bold);
     public static Font Mono = new Font("Consolas", 9F);
 
-    public static Color Lighten(Color c, int amount)
+    public static Color FromHex(string hex)
     {
-        return Color.FromArgb(c.A, Math.Min(255, c.R + amount), Math.Min(255, c.G + amount), Math.Min(255, c.B + amount));
-    }
-
-    public static Button MakeButton(string text, Color back, Color fore)
-    {
-        var b = new Button
-        {
-            Text = text,
-            FlatStyle = FlatStyle.Flat,
-            BackColor = back,
-            ForeColor = fore,
-            Font = BodyBold,
-            Cursor = Cursors.Hand,
-        };
-        b.FlatAppearance.BorderSize = 0;
-        Color hover = Lighten(back, 18);
-        b.MouseEnter += (s, e) => { if (b.Enabled) b.BackColor = hover; };
-        b.MouseLeave += (s, e) => b.BackColor = back;
-        b.EnabledChanged += (s, e) => b.BackColor = b.Enabled ? back : Secondary;
-        return b;
+        return Color.FromArgb(
+            Convert.ToInt32(hex.Substring(0, 2), 16),
+            Convert.ToInt32(hex.Substring(2, 2), 16),
+            Convert.ToInt32(hex.Substring(4, 2), 16));
     }
 
     public static GraphicsPath RoundedRect(Rectangle r, int radius)
     {
         var path = new GraphicsPath();
+        if (radius <= 0)
+        {
+            path.AddRectangle(r);
+            return path;
+        }
         int d = radius * 2;
         path.AddArc(r.X, r.Y, d, d, 180, 90);
         path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
@@ -87,14 +102,89 @@ static class Theme
     }
 }
 
+enum BtnKind { Primary, Ghost, Danger }
+
+// Mirror of the kit's .btn variants. One loud (Primary) button per view;
+// everything else is Ghost or Danger, both of which are outline-only.
+//
+// Variant is a settable property rather than baked in at construction,
+// because which control is the primary action genuinely moves: Start
+// becomes Stop, and a setup step stops being the next thing to do once
+// it is complete. Restyling in place keeps that from needing two buttons
+// fighting over one slot.
+class KitButton : Button
+{
+    private BtnKind kind;
+    private readonly Color parentBack;
+    private bool hovering;
+
+    public KitButton(string text, BtnKind kind, Color parentBack)
+    {
+        this.kind = kind;
+        this.parentBack = parentBack;
+
+        Text = text;
+        FlatStyle = FlatStyle.Flat;
+        Font = Theme.SmallBold;
+        Cursor = Cursors.Hand;
+        UseVisualStyleBackColor = false;
+        FlatAppearance.BorderSize = 1;
+
+        MouseEnter += (s, e) => { hovering = true; Apply(); };
+        MouseLeave += (s, e) => { hovering = false; Apply(); };
+        EnabledChanged += (s, e) => Apply();
+
+        Apply();
+    }
+
+    public BtnKind Kind
+    {
+        get { return kind; }
+        set { kind = value; Apply(); }
+    }
+
+    private void Apply()
+    {
+        if (!Enabled)
+        {
+            BackColor = kind == BtnKind.Primary ? Theme.Surface3 : parentBack;
+            ForeColor = Theme.TextDim;
+            FlatAppearance.BorderColor = Theme.Border;
+            return;
+        }
+
+        if (kind == BtnKind.Primary)
+        {
+            BackColor = hovering ? Theme.AccentHover : Theme.Accent;
+            ForeColor = Theme.TextOnAccent;
+            FlatAppearance.BorderColor = hovering ? Theme.AccentHover : Theme.Accent;
+            FlatAppearance.MouseOverBackColor = Theme.AccentHover;
+        }
+        else if (kind == BtnKind.Danger)
+        {
+            BackColor = parentBack;
+            ForeColor = Theme.Danger;
+            FlatAppearance.BorderColor = hovering ? Theme.Danger : Theme.Border;
+            FlatAppearance.MouseOverBackColor = parentBack;
+        }
+        else
+        {
+            BackColor = parentBack;
+            ForeColor = hovering ? Theme.Text : Theme.TextMuted;
+            FlatAppearance.BorderColor = hovering ? Theme.BorderStrong : Theme.Border;
+            FlatAppearance.MouseOverBackColor = parentBack;
+        }
+    }
+}
+
 // A small filled circle used for status indicators (RUNNING/STOPPED, step
 // completion) -- drawn via GDI+ rather than a Unicode glyph, since an
 // earlier version of this app hit font-rendering issues (tofu boxes) with
 // Unicode bullet characters on some systems.
 class Dot : Panel
 {
-    public Color DotColor = Theme.MutedText;
-    public Dot() { Size = new Size(10, 10); }
+    public Color DotColor = Theme.TextDim;
+    public Dot() { Size = new Size(10, 10); BackColor = Color.Transparent; }
     protected override void OnPaint(PaintEventArgs e)
     {
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
@@ -105,88 +195,208 @@ class Dot : Panel
     }
 }
 
-// Small rounded badge with a letter/number, used for the header logo mark
-// and the setup steps' numbering.
+// Rounded square carrying a letter or number: the rail's brand mark and
+// the setup steps' numbering.
 class Badge : Panel
 {
     public string Label = "";
-    public Font BadgeFont = new Font("Segoe UI", 11, FontStyle.Bold);
-    public Color Fore = Color.White;
-    private readonly bool gradient;
+    public Font BadgeFont = Theme.SmallBold;
+    public Color Fore = Theme.TextOnAccent;
+    public Color Fill = Theme.Accent;
 
-    public Badge(int size, bool gradient = true)
+    public Badge(int size)
     {
         Size = new Size(size, size);
-        this.gradient = gradient;
+        BackColor = Color.Transparent;
     }
 
     protected override void OnPaint(PaintEventArgs e)
     {
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         var rect = new Rectangle(0, 0, Width - 1, Height - 1);
-        using (var path = Theme.RoundedRect(rect, Math.Max(4, Width / 4)))
+        using (var path = Theme.RoundedRect(rect, Theme.RadiusMd))
+        using (var brush = new SolidBrush(Fill))
         {
-            if (gradient)
-            {
-                using (var brush = new LinearGradientBrush(rect, Theme.Accent, Theme.AccentDark, 45f))
-                {
-                    e.Graphics.FillPath(brush, path);
-                }
-            }
-            else
-            {
-                using (var brush = new SolidBrush(Theme.Secondary))
-                {
-                    e.Graphics.FillPath(brush, path);
-                }
-            }
+            e.Graphics.FillPath(brush, path);
         }
-        TextRenderer.DrawText(e.Graphics, Label, BadgeFont, ClientRectangle, Fore, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        TextRenderer.DrawText(e.Graphics, Label, BadgeFont, ClientRectangle, Fore,
+            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+    }
+}
+
+// The kit's .badge: a fully rounded pill of quiet metadata. Used for
+// uptime beside the running status.
+class Pill : Panel
+{
+    public string Label = "";
+    public Pill() { Height = 18; BackColor = Color.Transparent; }
+
+    public void SetText(string text, Graphics g)
+    {
+        Label = text;
+        Width = TextRenderer.MeasureText(text, Theme.Micro).Width + 16;
+        Invalidate();
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        var rect = new Rectangle(0, 0, Width - 1, Height - 1);
+        using (var path = Theme.RoundedRect(rect, Height / 2))
+        using (var brush = new SolidBrush(Theme.Surface3))
+        {
+            e.Graphics.FillPath(brush, path);
+        }
+        TextRenderer.DrawText(e.Graphics, Label, Theme.Micro, ClientRectangle, Theme.TextMuted,
+            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+    }
+}
+
+// The kit's .panel: a raised surface with a hairline border and soft
+// corners. Painted rather than composed, because WinForms has no border
+// radius. Children must be inset by Padding or they will square off the
+// corners they sit on.
+class Card : Panel
+{
+    private readonly Color surround;
+
+    public Card(Color surround)
+    {
+        this.surround = surround;
+        BackColor = surround;
+        Padding = new Padding(14);
+        DoubleBuffered = true;
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        var rect = new Rectangle(0, 0, Width - 1, Height - 1);
+        using (var path = Theme.RoundedRect(rect, Theme.RadiusLg))
+        {
+            using (var brush = new SolidBrush(Theme.Surface2)) e.Graphics.FillPath(brush, path);
+            using (var pen = new Pen(Theme.Border)) e.Graphics.DrawPath(pen, path);
+        }
+    }
+}
+
+// The kit's .nav-item: active state is a raised fill rather than an
+// accent fill, so it never competes with the one primary action.
+class NavItem : Button
+{
+    private bool active;
+
+    public NavItem(string text)
+    {
+        Text = "   " + text;
+        TextAlign = ContentAlignment.MiddleLeft;
+        FlatStyle = FlatStyle.Flat;
+        Font = Theme.Body;
+        Cursor = Cursors.Hand;
+        Height = 38;
+        BackColor = Theme.Surface0;
+        ForeColor = Theme.TextMuted;
+        FlatAppearance.BorderSize = 0;
+        UseVisualStyleBackColor = false;
+
+        MouseEnter += (s, e) => { if (!active && Enabled) { BackColor = Theme.Surface2; ForeColor = Theme.Text; } };
+        MouseLeave += (s, e) => { if (!active && Enabled) { BackColor = Theme.Surface0; ForeColor = Theme.TextMuted; } };
+        EnabledChanged += (s, e) => { if (!active) ForeColor = Enabled ? Theme.TextMuted : Theme.TextDim; };
+    }
+
+    public bool Active
+    {
+        get { return active; }
+        set
+        {
+            active = value;
+            BackColor = value ? Theme.Surface3 : Theme.Surface0;
+            ForeColor = value ? Theme.Text : (Enabled ? Theme.TextMuted : Theme.TextDim);
+            Invalidate();
+        }
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using (var brush = new SolidBrush(Theme.Surface0)) e.Graphics.FillRectangle(brush, ClientRectangle);
+        var rect = new Rectangle(0, 0, Width - 1, Height - 1);
+        using (var path = Theme.RoundedRect(rect, Theme.RadiusLg))
+        using (var brush = new SolidBrush(BackColor))
+        {
+            e.Graphics.FillPath(brush, path);
+        }
+        TextRenderer.DrawText(e.Graphics, Text, Font, ClientRectangle, ForeColor,
+            TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
     }
 }
 
 class MainForm : Form
 {
-    private const string AppVersion = "0.5.0";
+    private const string AppVersion = "0.5.1";
+    private const int RailWidth = 232;
+    private const int TopBarHeight = 64;
 
     private readonly string rootDir;
     private Process botProcess;
     private bool nodeAvailable;
     private bool hasEnteredDashboard;
+    private bool isReady;
 
-    // Header
-    private Button toggleButton;
+    // Polling the alert server needs one client for the process lifetime;
+    // a per-request HttpClient exhausts sockets under a repeating timer.
+    private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+
+    // Top bar
+    private KitButton toggleButton;
     private Dot statusDot;
     private Label statusLabel;
+    private Pill uptimePill;
+    private DateTime botStartedAt;
+    private Timer uptimeTimer;
+    private Timer overlayTimer;
 
-    // Dashboard
-    private Panel dashboardPanel;
-    private Button obsButton;
-    private Button testAlertButton;
-    private Button updateButton;
+    // Rail
+    private NavItem navDashboard;
+    private NavItem navSetup;
     private TextBox obsPasswordBox;
+    private KitButton obsButton;
+    private KitButton testAlertButton;
+    private KitButton updateButton;
+    private Label channelValue;
+    private Label portValue;
+    private Label overlayValue;
+
+    // Views
+    private Panel dashboardPanel;
+    private Panel setupPanel;
     private RichTextBox chatBox;
     private RichTextBox logBox;
     private bool chatIsEmpty = true;
 
     // Setup
-    private Panel setupPanel;
     private RichTextBox setupLogBox;
     private Dot nodeDot;
     private Label nodeStatusLabel;
-    private Button nodeDownloadButton;
-    private Button nodeRecheckButton;
+    private KitButton nodeDownloadButton;
+    private KitButton nodeRecheckButton;
+    private Badge nodeBadge;
     private Dot depsDot;
     private Label depsStatusLabel;
-    private Button installDepsButton;
+    private KitButton installDepsButton;
+    private Badge depsBadge;
     private Dot accountDot;
     private Label accountStatusLabel;
     private TextBox usernameBox;
     private TextBox channelBox;
-    private Button connectButton;
+    private KitButton connectButton;
+    private Badge accountBadge;
 
     private readonly Dictionary<string, Color> userColors = new Dictionary<string, Color>();
 
+    // Per-user chat colors are data, not design: they exist to tell
+    // speakers apart at a glance, so they stay as their own palette
+    // rather than being pulled from the kit's tokens.
     private static readonly Color[] UserPalette = new[]
     {
         Color.FromArgb(255, 129, 122), Color.FromArgb(122, 190, 255), Color.FromArgb(255, 200, 110),
@@ -204,7 +414,7 @@ class MainForm : Form
         Height = 600;
         MinimumSize = new Size(760, 460);
         StartPosition = FormStartPosition.CenterScreen;
-        BackColor = Theme.Background;
+        BackColor = Theme.Surface1;
         Font = Theme.Body;
         Icon = CreateAppIcon();
         FormClosing += OnFormClosing;
@@ -212,12 +422,38 @@ class MainForm : Form
         dashboardPanel = BuildDashboardPanel();
         setupPanel = BuildSetupPanel();
 
-        Controls.Add(dashboardPanel);
-        Controls.Add(setupPanel);
-        Controls.Add(BuildHeader());
+        var viewHost = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Surface1 };
+        viewHost.Controls.Add(dashboardPanel);
+        viewHost.Controls.Add(setupPanel);
+
+        // Dock resolution runs in reverse of add order, so the fill area
+        // goes in first and each edge afterwards claims the outer strip.
+        var mainArea = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Surface1 };
+        mainArea.Controls.Add(viewHost);
+        mainArea.Controls.Add(BuildTopBar());
+
+        Controls.Add(mainArea);
+        Controls.Add(BuildRail());
+
+        uptimeTimer = new Timer { Interval = 1000 };
+        uptimeTimer.Tick += (s, e) => RefreshUptime();
+
+        // 5s is slow enough to be invisible in CPU terms and fast enough
+        // that plugging the browser source into OBS shows up before you
+        // go looking for why it did not.
+        overlayTimer = new Timer { Interval = 5000 };
+        overlayTimer.Tick += async (s, e) => await RefreshOverlayCount();
 
         nodeAvailable = CheckNodeAvailable();
         RefreshSetupState();
+
+        // Without this the first rail button takes focus on open and
+        // wears a focus ring, which reads as a second highlighted
+        // control competing with the primary action.
+        Shown += (s, e) =>
+        {
+            if (toggleButton.Enabled) ActiveControl = toggleButton;
+        };
     }
 
     private static Icon CreateAppIcon()
@@ -228,120 +464,262 @@ class MainForm : Form
             g.SmoothingMode = SmoothingMode.AntiAlias;
             var rect = new Rectangle(1, 1, 29, 29);
             using (var path = Theme.RoundedRect(rect, 7))
-            using (var brush = new LinearGradientBrush(new Rectangle(0, 0, 32, 32), Theme.Accent, Theme.AccentDark, 45f))
+            using (var brush = new SolidBrush(Theme.Accent))
             {
                 g.FillPath(brush, path);
             }
             using (var font = new Font("Segoe UI", 15, FontStyle.Bold))
             {
-                TextRenderer.DrawText(g, "T", font, new Rectangle(0, 0, 32, 32), Color.White, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                TextRenderer.DrawText(g, "T", font, new Rectangle(0, 0, 32, 32), Theme.TextOnAccent,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
             }
             return Icon.FromHandle(bmp.GetHicon());
         }
     }
 
-    // ---------- Header ----------
+    // ---------- Rail ----------
 
-    private Panel BuildHeader()
+    private Panel BuildRail()
     {
-        var header = new Panel { Dock = DockStyle.Top, Height = 68, BackColor = Theme.Header };
-
-        var logo = new Badge(36) { Label = "T", Location = new Point(16, 16), BadgeFont = new Font("Segoe UI", 15, FontStyle.Bold) };
-
-        var title = new Label
+        var rail = new Panel
         {
-            Text = "twitch-bot",
-            Font = Theme.Title,
+            Dock = DockStyle.Left,
+            Width = RailWidth,
+            BackColor = Theme.Surface0,
+            Padding = new Padding(12, 12, 12, 12),
+        };
+
+        int inner = RailWidth - 24;
+
+        var top = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            BackColor = Theme.Surface0,
+        };
+
+        var brand = new Panel { Width = inner, Height = 44, BackColor = Theme.Surface0, Margin = new Padding(0, 0, 0, 8) };
+        var mark = new Badge(28) { Label = "T", Location = new Point(10, 8) };
+        var brandText = new Label
+        {
+            Text = "TWITCH-BOT",
+            Font = Theme.H2,
             ForeColor = Theme.Text,
             AutoSize = true,
-            Location = new Point(62, 12),
+            Location = new Point(48, 12),
+        };
+        brand.Controls.Add(mark);
+        brand.Controls.Add(brandText);
+
+        navDashboard = new NavItem("Dashboard") { Width = inner, Margin = new Padding(0, 0, 0, 2) };
+        navDashboard.Click += (s, e) => { if (isReady) ShowView(false); };
+
+        navSetup = new NavItem("Setup") { Width = inner, Margin = new Padding(0, 0, 0, 2) };
+
+        // Re-read .env and node_modules on the way in, so the steps reflect
+        // reality rather than whatever was true at startup (running
+        // `npm run twitch-auth` in a terminal changes the answer underneath
+        // us). RefreshSetupState picks the view itself, so the explicit
+        // ShowView has to come after it, and ShowView must never call back
+        // into RefreshSetupState or the two would recurse.
+        navSetup.Click += (s, e) => { RefreshSetupState(); ShowView(true); };
+
+        var obsLabel = new Label
+        {
+            Text = "OBS",
+            Font = Theme.Micro,
+            ForeColor = Theme.TextDim,
+            AutoSize = true,
+            Margin = new Padding(10, 16, 0, 6),
         };
 
-        var version = new Label
+        obsPasswordBox = new TextBox { PasswordChar = '*', BorderStyle = BorderStyle.None, BackColor = Theme.SurfaceInset, ForeColor = Theme.Text, Font = Theme.Small };
+        var obsPassHost = BorderHost(obsPasswordBox, inner, Theme.Surface0);
+        obsPassHost.Margin = new Padding(0, 0, 0, 8);
+
+        obsButton = new KitButton("Add Browser Source", BtnKind.Ghost, Theme.Surface0);
+        obsButton.Size = new Size(inner, 32);
+        obsButton.Margin = new Padding(0, 0, 0, 6);
+        obsButton.Click += OnObsButtonClick;
+
+        testAlertButton = new KitButton("Test Alert", BtnKind.Ghost, Theme.Surface0);
+        testAlertButton.Size = new Size(inner, 32);
+        testAlertButton.Click += OnTestAlertClick;
+
+        top.Controls.Add(brand);
+        top.Controls.Add(navDashboard);
+        top.Controls.Add(navSetup);
+        top.Controls.Add(obsLabel);
+        top.Controls.Add(obsPassHost);
+        top.Controls.Add(obsButton);
+        top.Controls.Add(testAlertButton);
+
+        var bottom = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Bottom,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            BackColor = Theme.Surface0,
+        };
+
+        var readout = new Panel { Width = inner, Height = 60, BackColor = Theme.Surface0, Margin = new Padding(10, 0, 0, 10) };
+        readout.Controls.Add(ReadoutRow("Channel", 0, out channelValue, inner - 10));
+        readout.Controls.Add(ReadoutRow("Alert port", 20, out portValue, inner - 10));
+        readout.Controls.Add(ReadoutRow("Overlays", 40, out overlayValue, inner - 10));
+        portValue.Font = Theme.Mono;
+
+        updateButton = new KitButton("Update", BtnKind.Ghost, Theme.Surface0);
+        updateButton.Size = new Size(inner, 32);
+        updateButton.Margin = new Padding(0, 0, 0, 8);
+        updateButton.Click += OnUpdateButtonClick;
+
+        var versionPin = new Label
         {
             Text = "v" + AppVersion,
-            Font = Theme.Small,
-            ForeColor = Theme.MutedText,
+            Font = Theme.Micro,
+            ForeColor = Theme.TextDim,
             AutoSize = true,
-            Location = new Point(63, 38),
+            Margin = new Padding(10, 0, 0, 2),
         };
 
-        statusDot = new Dot { DotColor = Theme.Stopped, Anchor = AnchorStyles.Top | AnchorStyles.Right };
+        bottom.Controls.Add(readout);
+        bottom.Controls.Add(updateButton);
+        bottom.Controls.Add(versionPin);
+
+        rail.Controls.Add(top);
+        rail.Controls.Add(bottom);
+        return rail;
+    }
+
+    // The kit's .readout: muted label, coloured value, everything small
+    // and dense. All three reference launchers show build and connection
+    // state exactly this way.
+    private Panel ReadoutRow(string label, int y, out Label valueLabel, int width)
+    {
+        var row = new Panel { Location = new Point(0, y), Size = new Size(width, 18), BackColor = Theme.Surface0 };
+        var l = new Label { Text = label, Font = Theme.Small, ForeColor = Theme.TextMuted, AutoSize = true, Location = new Point(0, 1) };
+        var v = new Label
+        {
+            Text = "-",
+            Font = Theme.SmallBold,
+            ForeColor = Theme.Text,
+            AutoSize = false,
+            TextAlign = ContentAlignment.MiddleRight,
+            Size = new Size(width, 16),
+            Location = new Point(0, 1),
+        };
+        // First added is front of the z-order, and the value spans the
+        // full width so it can right-align. The label therefore has to go
+        // in first or the value's opaque background hides it.
+        row.Controls.Add(l);
+        row.Controls.Add(v);
+        valueLabel = v;
+        return row;
+    }
+
+    // WinForms will not colour a TextBox border, so the box goes inside a
+    // 1px panel of the border token with the inset fill showing through.
+    private Panel BorderHost(TextBox box, int width, Color surround)
+    {
+        var host = new Panel
+        {
+            Width = width,
+            Height = 30,
+            BackColor = Theme.Border,
+            Padding = new Padding(1),
+        };
+        var innerPad = new Panel { Dock = DockStyle.Fill, BackColor = Theme.SurfaceInset, Padding = new Padding(7, 5, 7, 5) };
+        box.Dock = DockStyle.Fill;
+        innerPad.Controls.Add(box);
+        host.Controls.Add(innerPad);
+        return host;
+    }
+
+    // ---------- Top bar ----------
+
+    private Panel BuildTopBar()
+    {
+        var bar = new Panel { Dock = DockStyle.Top, Height = TopBarHeight, BackColor = Theme.Surface0 };
+
+        statusDot = new Dot { DotColor = Theme.Danger, Location = new Point(24, 28) };
+
         statusLabel = new Label
         {
             Text = "STOPPED",
             Font = Theme.BodyBold,
-            ForeColor = Theme.Stopped,
+            ForeColor = Theme.Text,
             AutoSize = true,
-            Anchor = AnchorStyles.Top | AnchorStyles.Right,
+            Location = new Point(42, 22),
         };
 
-        toggleButton = Theme.MakeButton("Start Bot", Theme.Accent, Color.White);
+        uptimePill = new Pill { Location = new Point(130, 23), Visible = false };
+
+        toggleButton = new KitButton("Start Bot", BtnKind.Primary, Theme.Surface0);
         toggleButton.Size = new Size(120, 34);
         toggleButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         toggleButton.Click += OnToggleClick;
 
-        header.Controls.Add(logo);
-        header.Controls.Add(title);
-        header.Controls.Add(version);
-        header.Controls.Add(statusDot);
-        header.Controls.Add(statusLabel);
-        header.Controls.Add(toggleButton);
+        var rule = new Panel { Dock = DockStyle.Bottom, Height = 1, BackColor = Theme.Border };
 
-        Action positionRightSide = () =>
-        {
-            toggleButton.Location = new Point(header.ClientSize.Width - toggleButton.Width - 16, 17);
-            statusLabel.Location = new Point(toggleButton.Left - statusLabel.Width - 22, 26);
-            statusDot.Location = new Point(statusLabel.Left - 18, 30);
-        };
-        header.Resize += (s, e) => positionRightSide();
-        positionRightSide();
+        bar.Controls.Add(statusDot);
+        bar.Controls.Add(statusLabel);
+        bar.Controls.Add(uptimePill);
+        bar.Controls.Add(toggleButton);
+        bar.Controls.Add(rule);
 
-        return header;
+        bar.Resize += (s, e) => { toggleButton.Location = new Point(bar.ClientSize.Width - toggleButton.Width - 24, 15); };
+        toggleButton.Location = new Point(bar.ClientSize.Width - toggleButton.Width - 24, 15);
+
+        return bar;
     }
 
     // ---------- Dashboard ----------
 
     private Panel BuildDashboardPanel()
     {
-        var panel = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Background, Visible = false };
-        panel.Controls.Add(BuildBottomBar());
-        panel.Controls.Add(BuildMainSplit());
-        return panel;
-    }
+        var panel = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Surface1, Visible = false, Padding = new Padding(16) };
 
-    private SplitContainer BuildMainSplit()
-    {
         var split = new SplitContainer
         {
             Dock = DockStyle.Fill,
-            BackColor = Theme.Border,
-            SplitterWidth = 2,
+            BackColor = Theme.Surface1,
+            SplitterWidth = 16,
         };
+        split.Panel1.BackColor = Theme.Surface1;
+        split.Panel2.BackColor = Theme.Surface1;
 
-        split.Panel1.Controls.Add(BuildFeedPanel("LIVE CHAT", out chatBox, true, "Chat will appear here once you're connected..."));
-        split.Panel2.Controls.Add(BuildFeedPanel("ACTIVITY LOG", out logBox, false, null));
-        split.Panel1.BackColor = Theme.Background;
-        split.Panel2.BackColor = Theme.Background;
+        split.Panel1.Controls.Add(BuildFeedCard("LIVE CHAT", out chatBox, true, "Chat will appear here once you're connected..."));
+        split.Panel2.Controls.Add(BuildFeedCard("ACTIVITY LOG", out logBox, false, null));
 
         split.HandleCreated += (s, e) =>
         {
-            try { split.SplitterDistance = (int)(split.Width * 0.62); }
+            try { split.SplitterDistance = (int)(split.Width * 0.6); }
             catch { /* width not settled yet on some resizes; harmless to skip */ }
         };
 
-        return split;
+        panel.Controls.Add(split);
+        return panel;
     }
 
-    private Panel BuildFeedPanel(string headerText, out RichTextBox box, bool isChat, string placeholder)
+    private Card BuildFeedCard(string headerText, out RichTextBox box, bool isChat, string placeholder)
     {
-        var panel = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Background, Padding = new Padding(10, 8, 10, 10) };
+        var card = new Card(Theme.Surface1) { Dock = DockStyle.Fill };
 
+        // Children of a Card must restate the card's own fill. They
+        // inherit BackColor from the control, which is set to the
+        // surrounding colour so the painted rounded corners can show
+        // through, and would otherwise stamp that surround back on top.
         var header = new Label
         {
             Text = headerText,
-            Font = Theme.Small,
-            ForeColor = Theme.MutedText,
+            Font = Theme.Micro,
+            ForeColor = Theme.TextDim,
+            BackColor = Theme.Surface2,
             Dock = DockStyle.Top,
             Height = 22,
         };
@@ -351,124 +729,79 @@ class MainForm : Form
             Dock = DockStyle.Fill,
             ReadOnly = true,
             BorderStyle = BorderStyle.None,
-            BackColor = Theme.Panel,
-            ForeColor = Theme.Text,
+            BackColor = Theme.Surface2,
+            ForeColor = isChat ? Theme.Text : Theme.TextMuted,
             Font = isChat ? Theme.Body : Theme.Mono,
         };
 
         if (placeholder != null)
         {
             rtb.Text = placeholder;
-            rtb.ForeColor = Theme.MutedText;
+            rtb.ForeColor = Theme.TextDim;
         }
 
-        panel.Controls.Add(rtb);
-        panel.Controls.Add(header);
+        card.Controls.Add(rtb);
+        card.Controls.Add(header);
         box = rtb;
-        return panel;
-    }
-
-    private Panel BuildBottomBar()
-    {
-        var bar = new Panel { Dock = DockStyle.Bottom, Height = 52, BackColor = Theme.Header };
-
-        var obsLabel = new Label
-        {
-            Text = "OBS password:",
-            ForeColor = Theme.MutedText,
-            Font = Theme.Small,
-            Location = new Point(16, 19),
-            AutoSize = true,
-        };
-        obsPasswordBox = new TextBox
-        {
-            Location = new Point(105, 15),
-            Width = 130,
-            PasswordChar = '*',
-            BackColor = Theme.Secondary,
-            ForeColor = Theme.Text,
-            BorderStyle = BorderStyle.FixedSingle,
-        };
-        obsButton = Theme.MakeButton("Add OBS Browser Source", Theme.Secondary, Theme.Text);
-        obsButton.Location = new Point(245, 11);
-        obsButton.Size = new Size(190, 30);
-        obsButton.Click += OnObsButtonClick;
-
-        testAlertButton = Theme.MakeButton("Test Alert", Theme.Secondary, Theme.Text);
-        testAlertButton.Location = new Point(445, 11);
-        testAlertButton.Size = new Size(100, 30);
-        testAlertButton.Click += OnTestAlertClick;
-
-        updateButton = Theme.MakeButton("Update", Theme.Secondary, Theme.Text);
-        updateButton.Size = new Size(90, 30);
-        updateButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        updateButton.Click += OnUpdateButtonClick;
-
-        bar.Controls.Add(obsLabel);
-        bar.Controls.Add(obsPasswordBox);
-        bar.Controls.Add(obsButton);
-        bar.Controls.Add(testAlertButton);
-        bar.Controls.Add(updateButton);
-
-        bar.Resize += (s, e) => { updateButton.Location = new Point(bar.ClientSize.Width - updateButton.Width - 16, 11); };
-
-        return bar;
+        return card;
     }
 
     // ---------- Setup ----------
 
     private Panel BuildSetupPanel()
     {
-        var panel = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Background, Visible = false, Padding = new Padding(24, 20, 24, 16) };
+        var panel = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Surface1, Visible = false, Padding = new Padding(16) };
 
         var title = new Label
         {
             Text = "Let's get you set up",
-            Font = Theme.Title,
+            Font = Theme.H1,
             ForeColor = Theme.Text,
-            AutoSize = true,
             Dock = DockStyle.Top,
-            Height = 32,
+            Height = 34,
         };
         var subtitle = new Label
         {
             Text = "A few quick steps, then you're ready to start the bot.",
-            Font = Theme.Subtitle,
-            ForeColor = Theme.MutedText,
-            AutoSize = true,
+            Font = Theme.Body,
+            ForeColor = Theme.TextMuted,
             Dock = DockStyle.Top,
-            Height = 26,
-            Margin = new Padding(0, 0, 0, 8),
+            Height = 30,
         };
 
-        var step1 = BuildStep("1", "Node.js", out nodeDot, out nodeStatusLabel, BuildNodeStepControls());
-        var step2 = BuildStep("2", "Install dependencies", out depsDot, out depsStatusLabel, BuildDepsStepControls());
-        var step3 = BuildStep("3", "Connect your Twitch account", out accountDot, out accountStatusLabel, BuildAccountStepControls());
+        var step1 = BuildStep("1", "Node.js", out nodeBadge, out nodeDot, out nodeStatusLabel, BuildNodeStepControls());
+        var step2 = BuildStep("2", "Install dependencies", out depsBadge, out depsDot, out depsStatusLabel, BuildDepsStepControls());
+        var step3 = BuildStep("3", "Connect your Twitch account", out accountBadge, out accountDot, out accountStatusLabel, BuildAccountStepControls());
 
+        var logCard = new Card(Theme.Surface1) { Dock = DockStyle.Fill };
         var logHeader = new Label
         {
             Text = "SETUP LOG",
-            Font = Theme.Small,
-            ForeColor = Theme.MutedText,
+            Font = Theme.Micro,
+            ForeColor = Theme.TextDim,
+            BackColor = Theme.Surface2,
             Dock = DockStyle.Top,
             Height = 22,
-            Margin = new Padding(0, 12, 0, 0),
         };
         setupLogBox = new RichTextBox
         {
             Dock = DockStyle.Fill,
             ReadOnly = true,
             BorderStyle = BorderStyle.None,
-            BackColor = Theme.Panel,
-            ForeColor = Theme.MutedText,
+            BackColor = Theme.Surface2,
+            ForeColor = Theme.TextMuted,
             Font = Theme.Mono,
         };
+        logCard.Controls.Add(setupLogBox);
+        logCard.Controls.Add(logHeader);
+
+        var logSpacer = new Panel { Dock = DockStyle.Top, Height = 12, BackColor = Theme.Surface1 };
 
         // Dock=Top controls stack in reverse of add order, so add the
         // fill-area content first, then each step (bottom-most first),
         // then the header text last so it ends up on top.
-        panel.Controls.Add(setupLogBox);
-        panel.Controls.Add(logHeader);
+        panel.Controls.Add(logCard);
+        panel.Controls.Add(logSpacer);
         panel.Controls.Add(step3);
         panel.Controls.Add(step2);
         panel.Controls.Add(step1);
@@ -478,58 +811,65 @@ class MainForm : Form
         return panel;
     }
 
-    private Panel BuildStep(string number, string title, out Dot dot, out Label statusLabel, Control extraControls)
+    private Panel BuildStep(string number, string title, out Badge badge, out Dot dot, out Label statusLabel, Control extraControls)
     {
-        var row = new Panel { Dock = DockStyle.Top, Height = 64, Padding = new Padding(0, 8, 0, 8) };
+        var wrap = new Panel { Dock = DockStyle.Top, Height = 66, BackColor = Theme.Surface1, Padding = new Padding(0, 0, 0, 8) };
+        var card = new Card(Theme.Surface1) { Dock = DockStyle.Fill, Padding = new Padding(12) };
 
-        var badge = new Badge(32, gradient: false) { Label = number, Location = new Point(0, 8), BadgeFont = Theme.BodyBold };
+        var b = new Badge(30) { Label = number, Fill = Theme.Surface3, Fore = Theme.TextMuted, Location = new Point(14, 14) };
 
         var titleLabel = new Label
         {
             Text = title,
             Font = Theme.BodyBold,
             ForeColor = Theme.Text,
+            BackColor = Theme.Surface2,
             AutoSize = true,
-            Location = new Point(44, 4),
+            Location = new Point(56, 10),
         };
 
-        var d = new Dot { Location = new Point(44, 30) };
+        var d = new Dot { Location = new Point(58, 34), Size = new Size(8, 8) };
         var status = new Label
         {
             Font = Theme.Small,
-            ForeColor = Theme.MutedText,
+            ForeColor = Theme.TextMuted,
+            BackColor = Theme.Surface2,
             AutoSize = true,
-            Location = new Point(60, 27),
+            Location = new Point(70, 28),
         };
 
-        row.Controls.Add(badge);
-        row.Controls.Add(titleLabel);
-        row.Controls.Add(d);
-        row.Controls.Add(status);
+        card.Controls.Add(b);
+        card.Controls.Add(titleLabel);
+        card.Controls.Add(d);
+        card.Controls.Add(status);
 
         if (extraControls != null)
         {
-            extraControls.Location = new Point(300, 4);
-            row.Controls.Add(extraControls);
-            row.Resize += (s, e) => { extraControls.Location = new Point(Math.Max(300, row.Width - extraControls.Width - 8), 4); };
+            card.Controls.Add(extraControls);
+            card.Resize += (s, e) =>
+            {
+                extraControls.Location = new Point(Math.Max(300, card.Width - extraControls.Width - 14), (card.Height - extraControls.Height) / 2);
+            };
         }
 
+        wrap.Controls.Add(card);
+        badge = b;
         dot = d;
         statusLabel = status;
-        return row;
+        return wrap;
     }
 
     private Control BuildNodeStepControls()
     {
-        var host = new Panel { Size = new Size(340, 60), BackColor = Color.Transparent };
-        nodeRecheckButton = Theme.MakeButton("Recheck", Theme.Secondary, Theme.Text);
-        nodeRecheckButton.Size = new Size(90, 30);
-        nodeRecheckButton.Location = new Point(0, 2);
+        var host = new Panel { Size = new Size(266, 32), BackColor = Theme.Surface2 };
+        nodeRecheckButton = new KitButton("Recheck", BtnKind.Ghost, Theme.Surface2);
+        nodeRecheckButton.Size = new Size(92, 30);
+        nodeRecheckButton.Location = new Point(0, 1);
         nodeRecheckButton.Click += OnRecheckNodeClick;
 
-        nodeDownloadButton = Theme.MakeButton("Download Node.js", Theme.Accent, Color.White);
+        nodeDownloadButton = new KitButton("Download Node.js", BtnKind.Primary, Theme.Surface2);
         nodeDownloadButton.Size = new Size(160, 30);
-        nodeDownloadButton.Location = new Point(100, 2);
+        nodeDownloadButton.Location = new Point(102, 1);
         nodeDownloadButton.Click += (s, e) => OpenUrl("https://nodejs.org/");
 
         host.Controls.Add(nodeRecheckButton);
@@ -539,10 +879,10 @@ class MainForm : Form
 
     private Control BuildDepsStepControls()
     {
-        var host = new Panel { Size = new Size(180, 60), BackColor = Color.Transparent };
-        installDepsButton = Theme.MakeButton("Install Dependencies", Theme.Accent, Color.White);
-        installDepsButton.Size = new Size(180, 30);
-        installDepsButton.Location = new Point(0, 2);
+        var host = new Panel { Size = new Size(170, 32), BackColor = Theme.Surface2 };
+        installDepsButton = new KitButton("Install Dependencies", BtnKind.Primary, Theme.Surface2);
+        installDepsButton.Size = new Size(170, 30);
+        installDepsButton.Location = new Point(0, 1);
         installDepsButton.Click += OnInstallDepsClick;
         host.Controls.Add(installDepsButton);
         return host;
@@ -550,64 +890,98 @@ class MainForm : Form
 
     private Control BuildAccountStepControls()
     {
-        var host = new Panel { Size = new Size(430, 60), BackColor = Color.Transparent };
+        var host = new Panel { Size = new Size(390, 32), BackColor = Theme.Surface2 };
 
-        var userLabel = new Label { Text = "Bot username", Font = Theme.Small, ForeColor = Theme.MutedText, AutoSize = true, Location = new Point(0, 0) };
-        usernameBox = new TextBox { Location = new Point(0, 16), Width = 140, BackColor = Theme.Secondary, ForeColor = Theme.Text, BorderStyle = BorderStyle.FixedSingle };
+        usernameBox = new TextBox { BorderStyle = BorderStyle.None, BackColor = Theme.SurfaceInset, ForeColor = Theme.Text, Font = Theme.Small };
+        var userHost = BorderHost(usernameBox, 120, Theme.Surface2);
+        userHost.Location = new Point(0, 1);
 
-        var chanLabel = new Label { Text = "Channel", Font = Theme.Small, ForeColor = Theme.MutedText, AutoSize = true, Location = new Point(150, 0) };
-        channelBox = new TextBox { Location = new Point(150, 16), Width = 140, BackColor = Theme.Secondary, ForeColor = Theme.Text, BorderStyle = BorderStyle.FixedSingle };
+        channelBox = new TextBox { BorderStyle = BorderStyle.None, BackColor = Theme.SurfaceInset, ForeColor = Theme.Text, Font = Theme.Small };
+        var chanHost = BorderHost(channelBox, 120, Theme.Surface2);
+        chanHost.Location = new Point(128, 1);
 
-        connectButton = Theme.MakeButton("Connect Twitch Account", Theme.Accent, Color.White);
-        connectButton.Size = new Size(180, 30);
-        connectButton.Location = new Point(300, 15);
+        connectButton = new KitButton("Connect", BtnKind.Primary, Theme.Surface2);
+        connectButton.Size = new Size(130, 30);
+        connectButton.Location = new Point(256, 1);
         connectButton.Click += OnConnectAccountClick;
 
-        host.Controls.Add(userLabel);
-        host.Controls.Add(usernameBox);
-        host.Controls.Add(chanLabel);
-        host.Controls.Add(channelBox);
+        host.Controls.Add(userHost);
+        host.Controls.Add(chanHost);
         host.Controls.Add(connectButton);
         return host;
     }
 
     // ---------- Readiness ----------
 
+    private void ShowView(bool setup)
+    {
+        setupPanel.Visible = setup;
+        dashboardPanel.Visible = !setup;
+        navSetup.Active = setup;
+        navDashboard.Active = !setup;
+        navDashboard.Enabled = isReady;
+
+        // Gated on readiness only, never on which view is showing: the bot
+        // keeps running while you are looking at Setup, so disabling this
+        // here would strand a running bot with no way to stop it. The one
+        // loud button rule still holds either way, because an unready panel
+        // greys this out (leaving the setup step's Connect as the only
+        // accent fill) and a running bot turns it into an outlined Stop.
+        toggleButton.Enabled = isReady;
+    }
+
     private void RefreshSetupState()
     {
         bool hasModules = Directory.Exists(Path.Combine(rootDir, "node_modules"));
         bool hasAccount = !string.IsNullOrEmpty(GetEnvValue("TWITCH_OAUTH_TOKEN", ""));
 
-        UpdateStepUI(nodeDot, nodeStatusLabel, nodeAvailable, nodeAvailable ? "Found" : "Not found -- download it, then click Recheck");
+        UpdateStepUI(nodeBadge, nodeDot, nodeStatusLabel, nodeAvailable, nodeAvailable ? "Found" : "Not found, download it then click Recheck");
         nodeDownloadButton.Visible = !nodeAvailable;
 
-        UpdateStepUI(depsDot, depsStatusLabel, hasModules, hasModules ? "Installed" : "Not installed yet");
+        UpdateStepUI(depsBadge, depsDot, depsStatusLabel, hasModules, hasModules ? "Installed" : "Not installed yet");
         installDepsButton.Enabled = nodeAvailable;
 
-        UpdateStepUI(accountDot, accountStatusLabel, hasAccount, hasAccount ? "Connected as " + GetEnvValue("TWITCH_BOT_USERNAME", "?") : "Not connected yet");
+        UpdateStepUI(accountBadge, accountDot, accountStatusLabel, hasAccount,
+            hasAccount ? "Connected as " + GetEnvValue("TWITCH_BOT_USERNAME", "?") : "Not connected yet");
+
+        // Exactly one setup control is the primary action at a time: the
+        // first step that is not finished yet. Once everything is done
+        // none of them are, which is what keeps the kit's one loud button
+        // per view rule true on this screen as well as the dashboard.
+        installDepsButton.Kind = (nodeAvailable && !hasModules) ? BtnKind.Primary : BtnKind.Ghost;
+        installDepsButton.Text = hasModules ? "Reinstall" : "Install Dependencies";
+
+        connectButton.Kind = (nodeAvailable && hasModules && !hasAccount) ? BtnKind.Primary : BtnKind.Ghost;
+        connectButton.Text = hasAccount ? "Reconnect" : "Connect";
         if (hasAccount)
         {
             usernameBox.Text = GetEnvValue("TWITCH_BOT_USERNAME", usernameBox.Text);
             channelBox.Text = GetEnvValue("TWITCH_CHANNEL", channelBox.Text);
         }
 
-        bool ready = nodeAvailable && hasModules && hasAccount;
-        setupPanel.Visible = !ready;
-        dashboardPanel.Visible = ready;
+        channelValue.Text = GetEnvValue("TWITCH_CHANNEL", "not set");
+        portValue.Text = GetEnvValue("ALERT_SERVER_PORT", "8090");
+        SetOverlayValue(botProcess == null ? "none" : overlayValue.Text, false);
 
-        if (ready && !hasEnteredDashboard)
+        isReady = nodeAvailable && hasModules && hasAccount;
+        ShowView(!isReady);
+
+        if (isReady && !hasEnteredDashboard)
         {
             hasEnteredDashboard = true;
             AppendLog("twitch-bot control ready.");
         }
     }
 
-    private void UpdateStepUI(Dot dot, Label label, bool done, string text)
+    private void UpdateStepUI(Badge badge, Dot dot, Label label, bool done, string text)
     {
-        dot.DotColor = done ? Theme.Running : Theme.Pending;
+        dot.DotColor = done ? Theme.Ok : Theme.Warn;
         dot.Invalidate();
+        badge.Fill = Theme.Surface3;
+        badge.Fore = done ? Theme.Ok : Theme.TextMuted;
+        badge.Invalidate();
         label.Text = text;
-        label.ForeColor = done ? Theme.Running : Theme.MutedText;
+        label.ForeColor = done ? Theme.Ok : Theme.TextMuted;
     }
 
     private bool CheckNodeAvailable()
@@ -640,7 +1014,7 @@ class MainForm : Form
         nodeRecheckButton.Enabled = false;
         AppendSetupLog("Checking for Node.js...");
         nodeAvailable = CheckNodeAvailable();
-        AppendSetupLog(nodeAvailable ? "Node.js found." : "Still not found -- make sure it finished installing, then try again.");
+        AppendSetupLog(nodeAvailable ? "Node.js found." : "Still not found, make sure it finished installing then try again.");
         nodeRecheckButton.Enabled = true;
         RefreshSetupState();
     }
@@ -872,21 +1246,78 @@ class MainForm : Form
     private void SetRunning()
     {
         statusLabel.Text = "RUNNING";
-        statusLabel.ForeColor = Theme.Running;
-        statusDot.DotColor = Theme.Running;
+        statusLabel.ForeColor = Theme.Text;
+        statusDot.DotColor = Theme.Ok;
         statusDot.Invalidate();
+
+        botStartedAt = DateTime.Now;
+        RefreshUptime();
+        uptimePill.Visible = true;
+        uptimeTimer.Start();
+        overlayTimer.Start();
+
+        // Nothing on a running panel needs doing, so the loud button goes
+        // away entirely: Stop is an outlined danger control, not a fill.
         toggleButton.Text = "Stop Bot";
-        toggleButton.BackColor = Theme.Stopped;
+        toggleButton.Kind = BtnKind.Danger;
     }
 
     private void SetStopped()
     {
         statusLabel.Text = "STOPPED";
-        statusLabel.ForeColor = Theme.Stopped;
-        statusDot.DotColor = Theme.Stopped;
+        statusLabel.ForeColor = Theme.Text;
+        statusDot.DotColor = Theme.Danger;
         statusDot.Invalidate();
+
+        uptimeTimer.Stop();
+        overlayTimer.Stop();
+        uptimePill.Visible = false;
+        SetOverlayValue("none", false);
+
         toggleButton.Text = "Start Bot";
-        toggleButton.BackColor = Theme.Accent;
+        toggleButton.Kind = BtnKind.Primary;
+    }
+
+    private void RefreshUptime()
+    {
+        TimeSpan up = DateTime.Now - botStartedAt;
+        string text;
+        if (up.TotalHours >= 1) text = "up " + (int)up.TotalHours + "h " + up.Minutes + "m";
+        else if (up.TotalMinutes >= 1) text = "up " + (int)up.TotalMinutes + "m";
+        else text = "up " + (int)up.TotalSeconds + "s";
+
+        using (var g = uptimePill.CreateGraphics()) uptimePill.SetText(text, g);
+        uptimePill.Location = new Point(statusLabel.Right + 10, 23);
+    }
+
+    // Polls the bot's alert server so the Overlays readout reflects what
+    // is actually connected, rather than only being learned when a Test
+    // Alert happens to be fired.
+    private async System.Threading.Tasks.Task RefreshOverlayCount()
+    {
+        if (botProcess == null) return;
+        string port = GetEnvValue("ALERT_SERVER_PORT", "8090");
+        try
+        {
+            string body = await Http.GetStringAsync("http://localhost:" + port + "/status");
+            var m = Regex.Match(body, "\"connectedOverlays\"\\s*:\\s*(\\d+)");
+            if (!m.Success) return;
+            int count = int.Parse(m.Groups[1].Value);
+            SetOverlayValue(count == 0 ? "none" : count + " connected", count > 0);
+        }
+        catch
+        {
+            // The server is not up yet during the first seconds after
+            // start, and a transient failure should not spam the log.
+            SetOverlayValue("unknown", false);
+        }
+    }
+
+    private void SetOverlayValue(string text, bool ok)
+    {
+        if (overlayValue == null) return;
+        overlayValue.Text = text;
+        overlayValue.ForeColor = ok ? Theme.Ok : Theme.TextMuted;
     }
 
     // ---------- OBS / Test Alert / Update ----------
@@ -915,17 +1346,14 @@ class MainForm : Form
 
         try
         {
-            using (var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) })
+            string response = await Http.GetStringAsync("http://localhost:" + port + "/test-alert");
+            if (response.Contains("\"connectedOverlays\":0"))
             {
-                string response = await client.GetStringAsync("http://localhost:" + port + "/test-alert");
-                if (response.Contains("\"connectedOverlays\":0"))
-                {
-                    AppendLog("Test alert sent, but no OBS overlay is connected -- add http://localhost:" + port + "/overlay.html as an OBS Browser Source first.");
-                }
-                else
-                {
-                    AppendLog("Test alert sent -- check OBS for the popup and listen for the voice/chime.");
-                }
+                AppendLog("Test alert sent, but no OBS overlay is connected -- add http://localhost:" + port + "/overlay.html as an OBS Browser Source first.");
+            }
+            else
+            {
+                AppendLog("Test alert sent -- check OBS for the popup and listen for the voice/chime.");
             }
         }
         catch (Exception ex)
@@ -1068,9 +1496,24 @@ class MainForm : Form
 
     // ---------- Log panel ----------
 
+    // The bot's stdout carries no severity field, so the log is coloured
+    // by keyword. Deliberately only two rules: anything that reads as a
+    // failure, and anything that reads as a milestone worth spotting from
+    // across the room. Everything else stays muted, because a log where
+    // most lines are coloured is a log where none of them stand out.
+    private Color ColorForLogLine(string line)
+    {
+        string l = line.ToLowerInvariant();
+        if (l.Contains("fail") || l.Contains("error") || l.Contains("could not") || l.Contains("not connected"))
+            return Theme.Danger;
+        if (l.Contains("connected") || l.Contains("listening") || l.Contains("installed") || l.Contains("ready"))
+            return Theme.Ok;
+        return Theme.TextMuted;
+    }
+
     private void AppendLog(string line)
     {
-        logBox.AppendText(line + Environment.NewLine);
+        AppendColored(logBox, line + Environment.NewLine, ColorForLogLine(line), Theme.Mono);
         logBox.SelectionStart = logBox.TextLength;
         logBox.ScrollToCaret();
         TrimIfTooLong(logBox);
@@ -1094,8 +1537,6 @@ class MainForm : Form
     // unused (always "twitch") -- kept as-is rather than reshaping the
     // format, since chatEmit.js's format is otherwise identical to
     // stream-bot's and there's no benefit to diverging it.
-    private static readonly Color TwitchColor = Color.FromArgb(169, 112, 255);
-
     private void AppendChat(string rawLine)
     {
         // Format: @@CHAT@@|platform|base64(username)|isMod(0/1)|isBroadcaster(0/1)|base64(text)
@@ -1117,13 +1558,12 @@ class MainForm : Form
         chatBox.SelectionStart = chatBox.TextLength;
         chatBox.SelectionLength = 0;
 
-        AppendColored(chatBox, DateTime.Now.ToString("HH:mm:ss "), Theme.MutedText, Theme.Small);
-        AppendColored(chatBox, "[Twitch] ", TwitchColor, Theme.Small);
+        AppendColored(chatBox, DateTime.Now.ToString("HH:mm:ss "), Theme.TextDim, Theme.Small);
 
-        if (isBroadcaster) AppendColored(chatBox, "[HOST] ", Color.Gold, Theme.Small);
-        else if (isMod) AppendColored(chatBox, "[MOD] ", Theme.Running, Theme.Small);
+        if (isBroadcaster) AppendColored(chatBox, "[HOST] ", Theme.Accent, Theme.Micro);
+        else if (isMod) AppendColored(chatBox, "[MOD] ", Theme.Ok, Theme.Micro);
 
-        AppendColored(chatBox, username + ":  ", ColorForUsername(username), Theme.BodyBold);
+        AppendColored(chatBox, username + ": ", ColorForUsername(username), Theme.BodyBold);
         AppendColored(chatBox, text + Environment.NewLine, Theme.Text, Theme.Body);
 
         chatBox.ScrollToCaret();

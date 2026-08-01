@@ -1,5 +1,5 @@
 // Guided setup wizard: installs dependencies and walks you through getting
-// Twitch credentials — printing (and opening) the exact page you need at
+// Twitch credentials, printing (and opening) the exact page you need at
 // every step. Writes the result to .env for you. Safe to re-run any time
 // to redo a step or refresh an expired login.
 
@@ -28,7 +28,7 @@ function step(n, title) {
 }
 
 // Prints the exact page needed for this step and opens it in the default
-// browser — this is the "link at every step" the wizard promises.
+// browser. This is the "link at every step" the wizard promises.
 function link(url) {
   console.log(`  -> ${url}`);
   openUrl(url);
@@ -50,7 +50,7 @@ async function confirm(question, defaultYes = false) {
 
 async function main() {
   console.log('twitch-bot setup wizard');
-  console.log('Installs dependencies and walks you through getting Twitch credentials — opening the exact page you need at each step.\n');
+  console.log('Installs dependencies and walks you through getting Twitch credentials, opening the exact page you need at each step.\n');
 
   if (fs.existsSync(ENV_PATH)) {
     const overwrite = await confirm('.env already exists. Overwrite it with new values from this wizard?', false);
@@ -69,7 +69,7 @@ async function main() {
   // resolves npm.cmd correctly.
   const install = spawnSync('npm install', { stdio: 'inherit', shell: true, cwd: ROOT });
   if (install.status !== 0) {
-    console.error('\nnpm install failed — fix that first, then re-run: npm run setup');
+    console.error('\nnpm install failed. Fix that first, then re-run: npm run setup');
     rl.close();
     process.exit(1);
   }
@@ -95,7 +95,7 @@ async function main() {
     link('https://dev.twitch.tv/console/apps/create');
     env.TWITCH_CLIENT_ID = await ask('Paste the Client ID');
 
-    step(2, 'Generate a Client Secret (optional — enables !so game lookups)');
+    step(2, 'Generate a Client Secret (optional, enables !so game lookups)');
     console.log('On the same app\'s page, click "New Secret". Press Enter to skip this.');
     link('https://dev.twitch.tv/console/apps');
     const secret = await ask('Paste the Client Secret (optional)');
@@ -108,7 +108,7 @@ async function main() {
   }
 
   step(useOwnApp ? 3 : 1, 'Log in as the bot account');
-  console.log('A browser tab will open — log in with the BOT account (not your streamer account, unless you want it posting as you) and approve access.');
+  console.log('A browser tab will open. Log in with the BOT account (not your streamer account, unless you want it posting as you) and approve access.');
   await ask('Press Enter when you\'re ready');
 
   try {

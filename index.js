@@ -10,7 +10,7 @@ const username = process.env.TWITCH_BOT_USERNAME;
 const token = process.env.TWITCH_OAUTH_TOKEN;
 
 if (!channel || !username || !token) {
-  console.error('Missing TWITCH_CHANNEL / TWITCH_BOT_USERNAME / TWITCH_OAUTH_TOKEN in .env — run `npm run setup` first.');
+  console.error('Missing TWITCH_CHANNEL / TWITCH_BOT_USERNAME / TWITCH_OAUTH_TOKEN in .env. Run `npm run setup` first.');
   process.exit(1);
 }
 

@@ -1,6 +1,6 @@
 // Minimal Twitch Helix client for public channel lookups (used by !so).
 // Uses an app access token via the client-credentials grant, which only
-// needs a Client ID + Client Secret — no per-user login required.
+// needs a Client ID + Client Secret, with no per-user login required.
 
 let appToken = null;
 let tokenExpiry = 0;

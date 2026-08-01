@@ -30,7 +30,7 @@ function start() {
   const token = process.env.TWITCH_OAUTH_TOKEN;
 
   if (!channel || !username || !token) {
-    console.error('[twitch] Missing TWITCH_CHANNEL / TWITCH_BOT_USERNAME / TWITCH_OAUTH_TOKEN in .env — skipping Twitch.');
+    console.error('[twitch] Missing TWITCH_CHANNEL / TWITCH_BOT_USERNAME / TWITCH_OAUTH_TOKEN in .env. Skipping Twitch.');
     logger.action('twitch-connect', 'Skipped: missing TWITCH_CHANNEL / TWITCH_BOT_USERNAME / TWITCH_OAUTH_TOKEN in .env', false);
     return null;
   }

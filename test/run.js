@@ -1,4 +1,4 @@
-// Offline smoke test — exercises config loading, commands, and the
+// Offline smoke test: exercises config loading, commands, and the
 // moderation engine without needing any real Twitch credentials or
 // network access. Run with: npm test
 
@@ -51,7 +51,7 @@ function checkBatchFileLineEndings() {
   for (const file of batFiles) {
     const text = fs.readFileSync(path.join(root, file), 'utf8');
     const hasLoneLF = /(?<!\r)\n/.test(text);
-    assert.ok(!hasLoneLF, `${file} has LF-only line endings somewhere — must be CRLF throughout for cmd.exe to parse it reliably`);
+    assert.ok(!hasLoneLF, `${file} has LF-only line endings somewhere; must be CRLF throughout for cmd.exe to parse it reliably`);
   }
   console.log(`batch file line endings (${batFiles.join(', ')}): ok`);
 }

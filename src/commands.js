@@ -29,7 +29,7 @@ async function buildShoutoutMessage(target) {
   });
   if (info) {
     return info.game
-      ? `Go check out ${info.displayName} at twitch.tv/${info.login} — they were last streaming ${info.game}!`
+      ? `Go check out ${info.displayName} at twitch.tv/${info.login}. They were last streaming ${info.game}!`
       : `Go check out ${info.displayName} at twitch.tv/${info.login}!`;
   }
   return `Go check out ${target}!`;
@@ -45,7 +45,7 @@ const BUILTINS = {
   },
   joke: () => {
     const jokes = configStore.get('jokes') || [];
-    if (jokes.length === 0) return 'No jokes loaded — add some to config/jokes.json.';
+    if (jokes.length === 0) return 'No jokes loaded. Add some to config/jokes.json.';
     const joke = jokes[Math.floor(Math.random() * jokes.length)];
     // alert() (chime + visual popup) is what actually shows up in OBS --
     // speak() alone is not enough, since OBS's Browser Source generally has
@@ -64,7 +64,7 @@ const BUILTINS = {
   },
   so: async (message, args) => {
     const targetRaw = args[0] || state.getLastRaider();
-    if (!targetRaw) return 'No one to shout out yet — try !so <username>.';
+    if (!targetRaw) return 'No one to shout out yet. Try !so <username>.';
     const target = targetRaw.replace(/^@/, '');
 
     const reply = await buildShoutoutMessage(target);
