@@ -5,45 +5,39 @@ on your own machine (no hosting required). This is a leaner, Twitch-only
 sibling of [stream-bot](https://github.com/CruddOCE/stream-bot): same core
 engine, no YouTube setup, no Google Cloud project needed.
 
-## Status: 0.5.15, undergoing testing
+## Status: 0.5.16, undergoing testing
 
 **This is a personal project under active development, and parts of it have
 not been tested on a real stream yet.** It works, and the offline test suite
 passes, but "passes its tests" and "proven live in front of viewers" are not
 the same thing. Treat it accordingly if you run it on your own channel.
 
-**0.5.15 specifically is a testing release.** It adds Reload Overlays and
-Start with Windows to the control panel, and neither has been used on a live
-stream. What was and was not checked is listed below, and in more detail in
-[`FEATURES-TO-ADD.md`](FEATURES-TO-ADD.md), which is the build-ordered
-backlog these came from.
+**0.5.16 completes Phase 1** of [`FEATURES-TO-ADD.md`](FEATURES-TO-ADD.md),
+the build-ordered backlog these features come from. It adds Mute Alerts,
+Report an Issue, an update check on launch, and three chat display controls
+(timestamps, mod-mention highlighting, font size). Everything that could be
+verified without a live audience was, and [`CHANGELOG.md`](CHANGELOG.md) has
+the full list.
 
-Specifically, these are known to be unverified rather than known to work:
+The earlier untested items from 0.5.15 have since been confirmed working:
+spoken alerts inside OBS, cooldowns and timers against live chat, the control
+panel's running state, the Reconnect button, Reload Overlays, and Start with
+Windows.
 
-- **Spoken alerts inside OBS.** The popup and chime are confirmed working,
-  and the server-side speech pipeline is confirmed working in an ordinary
-  browser. Whether the audio is actually audible inside OBS's Browser Source
-  has never been confirmed by ear.
-- **Cooldowns and timers.** Both are unit tested and the bot starts cleanly
-  with them wired in, but no real viewer has ever triggered a cooldown and no
-  timer has ever fired during a live stream. Timers are off by default in
-  `config/timers.json`.
-- **The control panel's running state.** The uptime badge, the Stop Bot
-  button and the live overlay connection readout only appear once the bot is
-  actually connected, and have not been observed in that state.
-- **The Reconnect button** on setup step 3. New code, never run.
-- **The Reload Overlays button.** The server endpoint and the overlay's
-  handling of it are confirmed working against a real browser source, but
-  the control panel's button has never been pressed against a running bot,
-  and nothing has been reloaded inside OBS itself.
-- **Turning Start with Windows on or off.** The panel correctly reads the
-  registry entry at startup and repoints a stale one, both confirmed, but
-  writing the entry by clicking the box has not been exercised, and no
-  Windows sign-in has been observed launching it.
+These are what remain known-unverified rather than known-to-work:
 
-`!title` and `!game` additionally require a token carrying the
-`channel:manage:broadcast` scope, and only work when the bot account is the
-broadcaster, since Twitch only lets a channel's own token change its info.
+- **The Mute Alerts and Check for updates on launch ticks.** Both are custom
+  controls that synthetic clicks cannot drive, so each was verified by
+  exercising the code behind it instead. The HTTP endpoint behind Mute Alerts
+  is covered by the test suite; the ticks themselves have not been clicked.
+- **Chat timestamps and mod-mention highlighting.** Both need live chat with
+  a moderator present before the rendering can be seen.
+- **The Report an Issue button.** It calls the same helper the setup screen's
+  Node.js download link already uses, but the click itself has not been
+  fired.
+
+`!title` and `!game` only work when the bot account is the broadcaster, since
+Twitch only lets a channel's own token change its info.
 
 Issues and pull requests are welcome, but please assume rough edges.
 
@@ -131,6 +125,13 @@ The **left rail** holds:
   browser source. Reload is the fix for an overlay that has gone stale or
   stopped rendering, and unlike Test Alert it is safe to press mid-stream:
   viewers see nothing, the page just reconnects.
+- **Mute Alerts**: silences alert audio while alerts keep appearing on the
+  overlay, for when you're mid-sentence or in a cutscene. This is not the
+  same as pausing: a muted alert still plays and still passes, it just makes
+  no sound, so nothing is held back to fire later. The setting lives in the
+  running bot rather than on disk and clears when the bot stops, because a
+  mute that quietly survived a restart would cost a whole stream of audio
+  before anyone noticed.
 - A **readout** of the channel, the alert server port, and how many overlays
   are currently connected. The overlay count is polled from the running bot
   every 5 seconds, so plugging the Browser Source into OBS shows up here
@@ -140,6 +141,13 @@ The **left rail** holds:
   deliberate choice rather than something that happens at every boot. The
   setting is a `HKCU\...\Run` registry entry rather than a Startup folder
   shortcut, so unticking the box removes it completely.
+- **Check for updates on launch**: on by default. Asks GitHub whether this
+  install is behind, and if it is, says so in the activity log and relabels
+  the Update button to **Update available**. It only ever checks: nothing is
+  downloaded or applied until you press Update, since git cannot overwrite
+  the running `.exe` anyway.
+- **Report an Issue**: opens the project's GitHub issue tracker in your
+  browser.
 - **Update**: pulls the latest version from GitHub. Since Windows won't let
   git overwrite a running `.exe`, clicking this closes the app, updates, and
   reopens it automatically (a console window shows progress in between).
@@ -155,7 +163,14 @@ The **content column** holds:
 
 - **Live Chat panel**: every message shows up as it arrives, with a
   timestamp, a `[MOD]`/`[HOST]` badge where it applies, and each username
-  rendered in its own consistent color.
+  rendered in its own consistent color. Its own small toolbar carries:
+  **Timestamps**, which hides the time prefix if you'd rather have the
+  width; **Highlight mentions**, which gives a raised background to any
+  message that `@`s a moderator so it doesn't scroll past unnoticed (mods
+  are learned from chat as they speak, so no Twitch API call is needed);
+  and **A-** / **A+**, which scale the chat text between 70% and 200% for
+  reading it from across the room on a second monitor. All three are
+  remembered between sessions.
 - **Activity Log panel**: connection status, commands run, moderation
   actions taken, and any errors. Lines that read as a failure are coloured
   red and lines that read as a milestone green, with everything else muted.
@@ -302,6 +317,13 @@ Pulls the latest version from GitHub, preserving your local `config/*.json`
 customizations (it stashes them, pulls, then reapplies; on a genuine conflict,
 nothing is lost, you just resolve it manually via `git status`).
 
+To find out whether an update exists without applying one:
+```
+node scripts/checkUpdate.js
+```
+This is what **Check for updates on launch** runs. It fetches and reports how
+far behind you are, and never touches the working tree.
+
 ## Uninstalling
 
 Double-click [`bin/uninstall-twitch-bot.exe`](bin/uninstall-twitch-bot.exe),
@@ -332,9 +354,10 @@ touches your source code, config, or git history.
   rather than PowerShell (~3x faster per call, see `native/`).
 - `src/twitchAuth.js` / `src/twitchApi.js`: OAuth login flow and the Helix
   API client used by `!so`/`!title`/`!game`.
-- `scripts/`: setup wizard, token refresh, update, uninstall, the OBS
-  WebSocket integration, and `connectAccount.js` (the non-interactive
-  sign-in step the control panel's setup screen runs).
+- `scripts/`: setup wizard, token refresh, update, `checkUpdate.js` (the
+  read-only "are we behind?" check), uninstall, the OBS WebSocket
+  integration, and `connectAccount.js` (the non-interactive sign-in step
+  the control panel's setup screen runs).
 - `bin/`: the compiled binaries and the batch entry points, kept out of the
   project root so the root stays readable. `install-twitch-bot.exe` is the
   deliberate exception and stays at the top level, since a fresh download

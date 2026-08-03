@@ -60,8 +60,18 @@ this, but per `HANDOFF.md` that path has never been exercised.
 
 No dependencies, no new subsystems. All of these can land in a single session.
 
+**All eight are built as of 2026-08-03.** Items 1 and 2 are tested. Items 3 to 8
+were built in one pass and carry their own verification notes; what is left
+unconfirmed in each case is either a custom tick that synthetic clicks cannot
+drive, or chat rendering that needs live chat to see.
+
+One thing worth knowing before adding another rail control: the rail is a fixed
+stack that cannot reflow, and it now sets the window's minimum height. Adding to
+it without raising `Height`/`MinimumSize` in `MainForm` silently eats the
+readout rows from the top, which is exactly what happened during this pass.
+
 ### 1. Reload Overlays
-**BUILT, AWAITING TESTING** (2026-08-01)
+**DONE** (built 2026-08-01, tested 2026-08-03)
 *hours*
 **Does:** Force-refreshes the OBS browser source without touching OBS. The
 standard fix for an overlay that has gone stale or stopped rendering.
@@ -76,12 +86,12 @@ count all exist, and it is immediately useful.
 a Reload Overlays ghost button sits under Test Alert in the rail.
 **Verified:** the endpoint and the overlay's handling of it, against a real
 browser source on an isolated port. The page reloaded and the socket
-reconnected, confirmed by the connection count returning to 1.
-**Not verified:** the control panel's button, which needs a running bot; and
-anything inside OBS itself.
+reconnected, confirmed by the connection count returning to 1. The control
+panel's button and the behaviour inside OBS were both confirmed on
+2026-08-03.
 
 ### 2. Load on startup
-**BUILT, AWAITING TESTING** (2026-08-01)
+**DONE** (built 2026-08-01, tested 2026-08-03)
 *hours*
 **Does:** Launches with Windows.
 **How:** A shortcut in the Startup folder, or an `HKCU\...\Run` entry, plus a
@@ -95,18 +105,29 @@ the panel only, not the bot. The tick is a new owner-drawn `KitCheck` control:
 a WinForms `CheckBox` with `FlatStyle.Flat` paints its *unchecked* box as a
 solid block of `ForeColor`, which reads as switched on when it is switched off.
 **Verified:** both painted states; reading the entry at startup; and the
-self-heal that repoints a stale entry at the current exe path.
-**Not verified:** writing the entry by clicking the tick, since a synthetic
-`WM_LBUTTONDOWN` does not drive a custom control the way `BM_CLICK` drives a
-real Button. Also unverified: an actual Windows sign-in launching the panel.
+self-heal that repoints a stale entry at the current exe path. Clicking the
+tick and an actual Windows sign-in launching the panel were both confirmed
+by hand on 2026-08-03, closing out the two paths that automation could not
+reach (a synthetic `WM_LBUTTONDOWN` does not drive a custom control the way
+`BM_CLICK` drives a real Button).
 
 ### 3. Report an issue
+**BUILT, AWAITING TESTING** (2026-08-03)
 *hours*
 **Does:** Opens a route to file a bug or request.
 **How:** `src/openBrowser.js` already exists. Point it at the GitHub issues page.
 One function call.
+**As built:** a Report an Issue ghost button in the rail's bottom group, above
+Update. It logs a line naming the version before opening
+`github.com/CruddOCE/twitch-bot/issues/new`, since a report without a version
+number is most of a wasted round trip.
+**Verified:** the button renders and is reachable.
+**Not verified:** the click itself, which was left alone rather than firing a
+browser window into the middle of a working session. It calls `OpenUrl`, the
+same helper the setup screen's Node.js download link already uses.
 
 ### 4. Mute Alerts
+**BUILT, AWAITING TESTING** (2026-08-03)
 *hours*
 **Does:** Silences alert audio while alerts keep appearing visually. For when
 someone is talking, or during a cutscene.
@@ -116,15 +137,39 @@ source. `config/alerts.json` already has an `enabled` flag, so the config shape
 exists.
 **Why it can come this early:** Unlike Pause, mute needs no queue. A muted alert
 still plays, just silently, so it is one gate on an existing path.
+**As built:** `GET /mute-alerts?muted=0|1` in `src/alertServer.js` holds an
+in-memory flag. `speak()` returns before synthesis when muted, and `alert()`
+carries `muted` on the payload so `public/overlay.html` skips `playChime()`
+while still showing the box. The state rides on the existing `/status` poll, so
+the rail's Mute Alerts tick follows the bot rather than guessing. Deliberately
+not persisted: the flag dies with the bot process, and the tick clears itself in
+`SetStopped()` rather than claiming a mute nothing is enforcing.
+**Verified:** end to end against a real browser source on port 8091. With mute
+on, the alert box reached full opacity while a patched `createOscillator`
+counted zero chimes and the log recorded `Speech suppressed because alert audio
+is muted`. With mute off, the same test alert produced exactly one chime. Four
+HTTP-level checks are in `npm test`, including that a bare `/mute-alerts` with
+no query mutes rather than silently doing nothing.
+**Not verified:** the tick itself, which is a custom control that synthetic
+clicks cannot drive. The endpoint behind it is fully covered.
 
 ### 5. Chat timestamps
+**BUILT, AWAITING TESTING** (2026-08-03)
 *hours*
 **Does:** Prefixes each chat line with the time it arrived.
 **How:** The panel already renders chat lines. Add the timestamp at emit time in
 `chatEmit.js` (already a structured delimited format, so adding a field is safe)
 or stamp it on arrival in the panel. A checkbox controls display.
+**Smaller than it looked:** the timestamp was already being rendered
+unconditionally in `AppendChat`, so the only missing part was the control over
+it. Stamped on arrival in the panel rather than at emit time, so toggling it
+costs nothing on the bot side.
+**As built:** a Timestamps tick in a new toolbar inside the LIVE CHAT card,
+gating the existing `HH:mm:ss` prefix. Saved to `HKCU\Software\twitch-bot`.
+**Not verified:** the rendering change, which needs live chat.
 
 ### 6. Highlight mod mentions
+**BUILT, AWAITING TESTING** (2026-08-03)
 *hours*
 **Does:** Flags messages that mention a moderator so they do not scroll past
 unnoticed.
@@ -132,14 +177,34 @@ unnoticed.
 panel already knows who the mods are. This is a scan for `@name` against that set,
 plus a background colour on the row.
 **Why easy:** The hard part, knowing who is a mod, is already solved.
+**As built:** `MentionsKnownMod()` matches `@name` against a case-insensitive
+set that fills itself in as mods speak, so no Twitch API call is needed. A hit
+paints the whole row `Surface3` via `SelectionBackColor`, set once for the row
+rather than per run so the highlight reads as one band instead of striping
+around the gaps. Deliberately `@name` only: bare names come up often enough in
+normal conversation that matching them would highlight most of chat, which
+highlights nothing.
+**Not verified:** the rendering, which needs live chat with a mod present.
 
 ### 7. Chat font size
+**BUILT, AWAITING TESTING** (2026-08-03)
 *hours*
 **Does:** Scales chat text, which matters on a second monitor while gaming.
 **How:** A font size on the chat control. Use the same control style here as for
 the feed in item 20, so the two do not drift into different interaction models.
+**As built:** `A-` and `A+` buttons in the chat card toolbar stepping
+`RichTextBox.ZoomFactor` by 0.1, clamped 0.7 to 2.0 and saved as a percentage.
+ZoomFactor rather than restyling each run, because it scales text already in the
+buffer without disturbing the per-user colours and per-run fonts `AppendColored`
+has baked in. **This sets the pattern item 20 should copy.**
+**Verified:** driven end to end with `BM_CLICK`. Three presses of `A+` wrote
+`ChatZoomPercent=130`, one press of `A-` wrote `120`, and a relaunch came back
+up visibly larger, confirming the restore path.
+**Watch for:** at 28px wide the buttons silently clipped to a bare `A`, losing
+the `-` and `+` entirely. They are 40px for that reason.
 
 ### 8. Automatic updates
+**BUILT, AWAITING TESTING** (2026-08-03)
 *hours*
 **Does:** Pulls new versions in the background instead of on a button press.
 **How:** `scripts/update.js` and the detached-watcher trick (a running `.exe`
@@ -147,6 +212,20 @@ cannot be overwritten by git, so the watcher waits for exit) both already exist.
 This adds a check on launch, a toggle, and a "restart to apply" prompt.
 **Why easy:** The genuinely hard part of self-updating on Windows is already
 solved and shipped.
+**Scope, deliberately narrowed:** it checks and tells you, it does not pull.
+Windows will not let git overwrite a running `.exe`, and the control panel is
+that `.exe`, so a background pull would fail precisely when the panel is open,
+which is always. Applying stays the Update button, which closes the app first.
+**As built:** `scripts/checkUpdate.js` fetches and prints
+`UPDATE_AVAILABLE=<n>`, run at launch when the Check for updates on launch tick
+is on (default on). A non-zero count logs a line and relabels Update to
+**Update available**. Relabelled rather than promoted to the accent style, since
+Start Bot is meant to be the only accent-filled control on screen.
+**Verified:** `UPDATE_AVAILABLE=0` against this repo, and the correct count
+against a scratch clone reset back a known number of commits. The panel run
+against a clone one commit behind showed **Update available** in the rail. A
+test asserts the script never references a mutating git verb.
+**Not verified:** the tick itself (custom control, as with item 4).
 
 ---
 

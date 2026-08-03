@@ -56,6 +56,78 @@ function checkBatchFileLineEndings() {
   console.log(`batch file line endings (${batFiles.join(', ')}): ok`);
 }
 
+// Mute is remote-controlled over HTTP by the control panel, so the thing
+// worth testing is the endpoint and the state it leaves behind, not the
+// flag on its own. Runs on the isolated test port so it can never collide
+// with a real bot running on 8090.
+async function checkMuteAlerts() {
+  const http = require('http');
+  const alertServer = require('../src/alertServer');
+
+  const port = Number(process.env.ALERT_SERVER_PORT) || 8091;
+  process.env.ALERT_SERVER_PORT = String(port);
+  const server = alertServer.start();
+  await new Promise((resolve) => server.once('listening', resolve));
+
+  function get(urlPath) {
+    return new Promise((resolve, reject) => {
+      http
+        .get(`http://localhost:${port}${urlPath}`, (res) => {
+          let body = '';
+          res.on('data', (chunk) => { body += chunk; });
+          res.on('end', () => resolve(JSON.parse(body)));
+        })
+        .on('error', reject);
+    });
+  }
+
+  try {
+    assert.strictEqual(alertServer.isMuted(), false, 'alerts should start unmuted');
+    let status = await get('/status');
+    assert.strictEqual(status.muted, false, '/status should report the unmuted state');
+    console.log('mute defaults to off: ok');
+
+    let muted = await get('/mute-alerts?muted=1');
+    assert.strictEqual(muted.muted, true);
+    assert.strictEqual(alertServer.isMuted(), true);
+    status = await get('/status');
+    assert.strictEqual(status.muted, true, '/status should carry the mute state for the panel to poll');
+    console.log('mute on via /mute-alerts, reflected in /status: ok');
+
+    const unmuted = await get('/mute-alerts?muted=0');
+    assert.strictEqual(unmuted.muted, false);
+    assert.strictEqual(alertServer.isMuted(), false);
+    console.log('unmute via /mute-alerts: ok');
+
+    // A bare /mute-alerts with no query should mute rather than silently
+    // doing nothing, since that is the safe reading of the request.
+    const bare = await get('/mute-alerts');
+    assert.strictEqual(bare.muted, true, 'a bare /mute-alerts should mute');
+    console.log('bare /mute-alerts mutes: ok');
+
+    alertServer.setMuted(false);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+// scripts/checkUpdate.js must never modify the working tree: a running
+// .exe cannot be overwritten by git, so a check that quietly pulled would
+// fail exactly when the control panel is open, which is always.
+function checkUpdateScriptIsReadOnly() {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'checkUpdate.js'), 'utf8');
+  assert.ok(source.includes('UPDATE_AVAILABLE='), 'checkUpdate.js must print the marker the control panel parses');
+
+  const mutating = ['pull', 'merge', 'reset', 'checkout', 'stash', 'clean'];
+  for (const verb of mutating) {
+    assert.ok(
+      !new RegExp(`['"\`]${verb}['"\`]`).test(source),
+      `checkUpdate.js must stay read-only, but it references git ${verb}`
+    );
+  }
+  console.log('checkUpdate.js stays read-only: ok');
+}
+
 async function run() {
   checkBatchFileLineEndings();
 
@@ -201,6 +273,12 @@ async function run() {
   result = moderation.evaluate({ username: 'modUser', text: 'this has a badword in it', isMod: true, isBroadcaster: false });
   assert.strictEqual(result, null);
   console.log('mods exempt from moderation: ok');
+
+  // --- Mute alerts ---
+  await checkMuteAlerts();
+
+  // --- Update check ---
+  checkUpdateScriptIsReadOnly();
 
   configStore.close();
   fs.rmSync(scratchDir, { recursive: true, force: true });

@@ -10,6 +10,13 @@ let wss = null;
 let server = null;
 let listeningPort = null;
 
+// Silences alert audio while alerts keep appearing on screen, for when
+// you're mid-sentence or in a cutscene. Deliberately in-memory and not
+// persisted to config: this is a "for the next few minutes" control, and
+// a mute that quietly survived a restart would cost a whole stream's
+// worth of audio before anyone noticed it was still on.
+let alertsMuted = false;
+
 function start() {
   const port = Number(process.env.ALERT_SERVER_PORT) || 8090;
   listeningPort = port;
@@ -33,7 +40,20 @@ function start() {
   // because /test-alert has side effects (it fires an alert and speaks),
   // so it can't be used to answer "is anything connected right now?".
   app.get('/status', (req, res) => {
-    res.json({ ok: true, connectedOverlays: getConnectedCount(), port: listeningPort });
+    res.json({ ok: true, connectedOverlays: getConnectedCount(), port: listeningPort, muted: alertsMuted });
+  });
+
+  // Mute rides on /status above rather than getting its own poll, so the
+  // control panel's tick follows the bot's actual state without a second
+  // request. Any value other than an explicit "0"/"false" mutes, so a bare
+  // /mute-alerts does the safe thing.
+  app.get('/mute-alerts', (req, res) => {
+    const raw = String(req.query.muted === undefined ? '1' : req.query.muted).toLowerCase();
+    alertsMuted = !(raw === '0' || raw === 'false');
+    logger.action('mute-alerts', alertsMuted
+      ? 'Alert audio muted -- alerts will still appear on screen'
+      : 'Alert audio unmuted');
+    res.json({ ok: true, muted: alertsMuted });
   });
 
   // The standard fix for a browser source that has gone stale or stopped
@@ -128,7 +148,9 @@ function alert(type, message) {
   console.log(`[alerts] ${type}: ${message}`);
   const alerts = configStore.get('alerts');
   const displaySeconds = alerts && alerts.displaySeconds;
-  broadcast({ kind: 'alert', type, message, displaySeconds });
+  // The chime is played by the overlay, so mute has to travel with the
+  // payload; the box itself still shows either way.
+  broadcast({ kind: 'alert', type, message, displaySeconds, muted: alertsMuted });
 }
 
 // Sent to the overlay to be read aloud. Generates real audio server-side
@@ -139,6 +161,12 @@ function alert(type, message) {
 // (kind: 'tts' with `text` instead of `url`) if server-side synthesis
 // fails or isn't available (e.g. non-Windows).
 async function speak(text) {
+  // Skipped before synthesis rather than at playback, since generating a
+  // WAV nobody will hear is pure waste.
+  if (alertsMuted) {
+    logger.info('tts', 'Speech suppressed because alert audio is muted');
+    return;
+  }
   if (!wss || getConnectedCount() === 0) {
     logger.action('alert-broadcast', 'tts broadcast attempted but no overlay is connected', false);
     return;
@@ -152,4 +180,13 @@ async function speak(text) {
   }
 }
 
-module.exports = { start, alert, speak };
+function isMuted() {
+  return alertsMuted;
+}
+
+function setMuted(value) {
+  alertsMuted = Boolean(value);
+  return alertsMuted;
+}
+
+module.exports = { start, alert, speak, isMuted, setMuted };

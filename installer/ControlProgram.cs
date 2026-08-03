@@ -408,7 +408,7 @@ class NavItem : Button
 
 class MainForm : Form
 {
-    private const string AppVersion = "0.5.15";
+    private const string AppVersion = "0.5.16";
     private const int RailWidth = 232;
     private const int TopBarHeight = 64;
 
@@ -438,8 +438,11 @@ class MainForm : Form
     private KitButton obsButton;
     private KitButton testAlertButton;
     private KitButton reloadOverlaysButton;
+    private KitCheck muteAlertsBox;
+    private KitButton reportIssueButton;
     private KitButton updateButton;
     private KitCheck startWithWindowsBox;
+    private KitCheck autoUpdateBox;
     private Label channelValue;
     private Label portValue;
     private Label overlayValue;
@@ -450,6 +453,17 @@ class MainForm : Form
     private RichTextBox chatBox;
     private RichTextBox logBox;
     private bool chatIsEmpty = true;
+
+    // Chat display controls, kept in the chat card rather than the rail so
+    // they sit next to what they affect.
+    private KitCheck timestampsBox;
+    private KitCheck highlightMentionsBox;
+    private KitButton chatSmallerButton;
+    private KitButton chatLargerButton;
+
+    // Mods learned from chat as it arrives: every line carries isMod, so
+    // the set fills itself in without asking Twitch for a mod list.
+    private readonly HashSet<string> knownMods = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
     // Setup
     private RichTextBox setupLogBox;
@@ -492,8 +506,13 @@ class MainForm : Form
 
         Text = "twitch-bot";
         Width = 940;
-        Height = 600;
-        MinimumSize = new Size(760, 460);
+        // The rail is a fixed stack of controls that cannot reflow, so the
+        // window's height is set by what the rail has to fit rather than by
+        // the content column. Adding a rail control means checking this
+        // again: below roughly 600px of client height the rail's bottom
+        // group starts eating the readout from the top.
+        Height = 640;
+        MinimumSize = new Size(760, 630);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Theme.Surface1;
         Font = Theme.Body;
@@ -527,6 +546,16 @@ class MainForm : Form
 
         nodeAvailable = CheckNodeAvailable();
         RefreshSetupState();
+
+        // Restored after the chat box exists, since ZoomFactor is a
+        // property of the control rather than something the toolbar holds.
+        int zoomPercent;
+        if (int.TryParse(GetPref(PrefChatZoom, "100"), out zoomPercent) && zoomPercent >= 70 && zoomPercent <= 200)
+        {
+            chatBox.ZoomFactor = zoomPercent / 100f;
+        }
+
+        if (nodeAvailable && autoUpdateBox.Checked) CheckForUpdatesInBackground();
 
         // Without this the first rail button takes focus on open and
         // wears a focus ring, which reads as a second highlighted
@@ -633,7 +662,14 @@ class MainForm : Form
 
         reloadOverlaysButton = new KitButton("Reload Overlays", BtnKind.Ghost, Theme.Surface0);
         reloadOverlaysButton.Size = new Size(inner, 32);
+        reloadOverlaysButton.Margin = new Padding(0, 0, 0, 8);
         reloadOverlaysButton.Click += OnReloadOverlaysClick;
+
+        // Sits with the other alert controls rather than with the chat
+        // display options, because it changes what viewers get, not what
+        // this window shows.
+        var muteRow = BuildCheckRow("Mute Alerts", out muteAlertsBox, inner);
+        muteAlertsBox.CheckedChanged += OnMuteAlertsChanged;
 
         top.Controls.Add(brand);
         top.Controls.Add(navDashboard);
@@ -643,6 +679,7 @@ class MainForm : Form
         top.Controls.Add(obsButton);
         top.Controls.Add(testAlertButton);
         top.Controls.Add(reloadOverlaysButton);
+        top.Controls.Add(muteRow);
 
         var bottom = new FlowLayoutPanel
         {
@@ -654,16 +691,25 @@ class MainForm : Form
             BackColor = Theme.Surface0,
         };
 
-        var readout = new Panel { Width = inner, Height = 60, BackColor = Theme.Surface0, Margin = new Padding(10, 0, 0, 10) };
+        var readout = new Panel { Width = inner, Height = 60, BackColor = Theme.Surface0, Margin = new Padding(10, 0, 0, 6) };
         readout.Controls.Add(ReadoutRow("Channel", 0, out channelValue, inner - 10));
         readout.Controls.Add(ReadoutRow("Alert port", 20, out portValue, inner - 10));
         readout.Controls.Add(ReadoutRow("Overlays", 40, out overlayValue, inner - 10));
         portValue.Font = Theme.Mono;
 
+        reportIssueButton = new KitButton("Report an Issue", BtnKind.Ghost, Theme.Surface0);
+        reportIssueButton.Size = new Size(inner, 32);
+        reportIssueButton.Margin = new Padding(0, 0, 0, 6);
+        reportIssueButton.Click += OnReportIssueClick;
+
         updateButton = new KitButton("Update", BtnKind.Ghost, Theme.Surface0);
         updateButton.Size = new Size(inner, 32);
         updateButton.Margin = new Padding(0, 0, 0, 8);
         updateButton.Click += OnUpdateButtonClick;
+
+        var autoUpdateRow = BuildCheckRow("Check for updates on launch", out autoUpdateBox, inner);
+        autoUpdateBox.SetCheckedSilently(GetPref(PrefCheckUpdates, true));
+        autoUpdateBox.CheckedChanged += (s, e) => SetPref(PrefCheckUpdates, autoUpdateBox.Checked);
 
         var versionPin = new Label
         {
@@ -676,6 +722,8 @@ class MainForm : Form
 
         bottom.Controls.Add(readout);
         bottom.Controls.Add(BuildStartWithWindowsRow(inner));
+        bottom.Controls.Add(autoUpdateRow);
+        bottom.Controls.Add(reportIssueButton);
         bottom.Controls.Add(updateButton);
         bottom.Controls.Add(versionPin);
 
@@ -712,30 +760,37 @@ class MainForm : Form
 
     // The kit's .checkbox-row: tick, gap, body text. The caption is its own
     // Label so the whole row is clickable rather than just a 15px square.
-    private Panel BuildStartWithWindowsRow(int width)
+    private Panel BuildCheckRow(string caption, out KitCheck box, int width)
     {
-        var row = new Panel { Width = width, Height = 22, BackColor = Theme.Surface0, Margin = new Padding(10, 0, 0, 10) };
+        var row = new Panel { Width = width, Height = 22, BackColor = Theme.Surface0, Margin = new Padding(10, 0, 0, 6) };
 
-        startWithWindowsBox = new KitCheck { Location = new Point(0, 3) };
+        var check = new KitCheck { Location = new Point(0, 3) };
 
-        var caption = new Label
+        var label = new Label
         {
-            Text = "Start with Windows",
+            Text = caption,
             Font = Theme.Small,
             ForeColor = Theme.Text,
             AutoSize = true,
             Location = new Point(23, 3),
             Cursor = Cursors.Hand,
         };
-        caption.Click += (s, e) => startWithWindowsBox.Toggle();
+        label.Click += (s, e) => check.Toggle();
+
+        row.Controls.Add(label);
+        row.Controls.Add(check);
+        box = check;
+        return row;
+    }
+
+    private Panel BuildStartWithWindowsRow(int width)
+    {
+        var row = BuildCheckRow("Start with Windows", out startWithWindowsBox, width);
 
         // Restore silently, so reading the registry does not immediately
         // write it back.
         startWithWindowsBox.SetCheckedSilently(SyncStartWithWindowsState());
         startWithWindowsBox.CheckedChanged += OnStartWithWindowsChanged;
-
-        row.Controls.Add(caption);
-        row.Controls.Add(startWithWindowsBox);
         return row;
     }
 
@@ -810,8 +865,8 @@ class MainForm : Form
         split.Panel1.BackColor = Theme.Surface1;
         split.Panel2.BackColor = Theme.Surface1;
 
-        split.Panel1.Controls.Add(BuildFeedCard("LIVE CHAT", out chatBox, true, "Chat will appear here once you're connected..."));
-        split.Panel2.Controls.Add(BuildFeedCard("ACTIVITY LOG", out logBox, false, null));
+        split.Panel1.Controls.Add(BuildFeedCard("LIVE CHAT", out chatBox, true, "Chat will appear here once you're connected...", BuildChatToolbar()));
+        split.Panel2.Controls.Add(BuildFeedCard("ACTIVITY LOG", out logBox, false, null, null));
 
         split.HandleCreated += (s, e) =>
         {
@@ -823,7 +878,7 @@ class MainForm : Form
         return panel;
     }
 
-    private Card BuildFeedCard(string headerText, out RichTextBox box, bool isChat, string placeholder)
+    private Card BuildFeedCard(string headerText, out RichTextBox box, bool isChat, string placeholder, Control toolbar)
     {
         var card = new Card(Theme.Surface1) { Dock = DockStyle.Fill };
 
@@ -857,10 +912,104 @@ class MainForm : Form
             rtb.ForeColor = Theme.TextDim;
         }
 
+        // Fill goes in before the docked edges, since dock resolution runs
+        // in reverse of add order and the toolbar has to claim its strip
+        // above the feed rather than under the header.
         card.Controls.Add(rtb);
+        if (toolbar != null) card.Controls.Add(toolbar);
         card.Controls.Add(header);
         box = rtb;
         return card;
+    }
+
+    // Chat display options live in the chat card, not the rail: they only
+    // change what this window shows, and the rail is already at the height
+    // where the form's minimum size starts clipping it.
+    private Panel BuildChatToolbar()
+    {
+        var bar = new Panel { Dock = DockStyle.Top, Height = 26, BackColor = Theme.Surface2 };
+
+        var tsRow = BuildInlineCheck("Timestamps", out timestampsBox, 0);
+        timestampsBox.SetCheckedSilently(GetPref(PrefTimestamps, true));
+        timestampsBox.CheckedChanged += (s, e) => SetPref(PrefTimestamps, timestampsBox.Checked);
+
+        var mentionRow = BuildInlineCheck("Highlight mentions", out highlightMentionsBox, 108);
+        highlightMentionsBox.SetCheckedSilently(GetPref(PrefHighlightMentions, true));
+        highlightMentionsBox.CheckedChanged += (s, e) => SetPref(PrefHighlightMentions, highlightMentionsBox.Checked);
+
+        // Wide enough for two glyphs plus the Button class's own internal
+        // text padding: at 28px the trailing "-"/"+" was silently clipped
+        // and both buttons rendered as a bare "A".
+        chatSmallerButton = new KitButton("A-", BtnKind.Ghost, Theme.Surface2);
+        chatSmallerButton.Size = new Size(40, 22);
+        chatSmallerButton.Font = Theme.Small;
+        chatSmallerButton.Click += (s, e) => StepChatZoom(-0.1f);
+
+        chatLargerButton = new KitButton("A+", BtnKind.Ghost, Theme.Surface2);
+        chatLargerButton.Size = new Size(40, 22);
+        chatLargerButton.Font = Theme.Small;
+        chatLargerButton.Click += (s, e) => StepChatZoom(0.1f);
+
+        // Kept against the right edge as the splitter moves, positioned by
+        // hand rather than by Anchor: the row is laid out absolutely, so
+        // there is no meaningful initial offset for an anchor to preserve.
+        // The floor stops them sliding underneath the checkboxes when the
+        // chat pane is dragged narrow.
+        bar.SizeChanged += (s, e) =>
+        {
+            chatSmallerButton.Location = new Point(Math.Max(244, bar.Width - 90), 2);
+            chatLargerButton.Location = new Point(Math.Max(288, bar.Width - 46), 2);
+        };
+
+        bar.Controls.Add(tsRow);
+        bar.Controls.Add(mentionRow);
+        bar.Controls.Add(chatSmallerButton);
+        bar.Controls.Add(chatLargerButton);
+        return bar;
+    }
+
+    // The rail's check row is a full-width block with its own margin; this
+    // is the same tick and caption packed inline for a toolbar.
+    private Panel BuildInlineCheck(string caption, out KitCheck box, int x)
+    {
+        int textWidth = TextRenderer.MeasureText(caption, Theme.Small).Width;
+        var row = new Panel
+        {
+            Location = new Point(x, 4),
+            Size = new Size(21 + textWidth, 20),
+            BackColor = Theme.Surface2,
+        };
+
+        var check = new KitCheck { Location = new Point(0, 2), BackColor = Theme.Surface2 };
+
+        var label = new Label
+        {
+            Text = caption,
+            Font = Theme.Small,
+            ForeColor = Theme.TextMuted,
+            BackColor = Theme.Surface2,
+            AutoSize = true,
+            Location = new Point(21, 2),
+            Cursor = Cursors.Hand,
+        };
+        label.Click += (s, e) => check.Toggle();
+
+        row.Controls.Add(label);
+        row.Controls.Add(check);
+        box = check;
+        return row;
+    }
+
+    // ZoomFactor rather than restyling each run: it scales text already in
+    // the buffer without touching the per-user colours and per-run fonts
+    // that AppendColored has already baked in.
+    private void StepChatZoom(float delta)
+    {
+        float next = chatBox.ZoomFactor + delta;
+        if (next < 0.7f) next = 0.7f;
+        if (next > 2.0f) next = 2.0f;
+        chatBox.ZoomFactor = next;
+        SetPref(PrefChatZoom, ((int)Math.Round(next * 100)).ToString());
     }
 
     // ---------- Setup ----------
@@ -1391,6 +1540,11 @@ class MainForm : Form
         uptimePill.Visible = false;
         SetOverlayValue("none", false);
 
+        // The mute flag lives in the bot process, so stopping it clears
+        // the mute. Follow that here rather than leaving a tick claiming
+        // a mute that nothing is enforcing any more.
+        muteAlertsBox.SetCheckedSilently(false);
+
         toggleButton.Text = "Start Bot";
         toggleButton.Kind = BtnKind.Primary;
     }
@@ -1417,6 +1571,13 @@ class MainForm : Form
         try
         {
             string body = await Http.GetStringAsync("http://localhost:" + port + "/status");
+
+            // Mute rides along on this poll rather than getting its own, so
+            // the tick follows the bot even if something else muted it (a
+            // second panel, or a hand-typed URL).
+            var muted = Regex.Match(body, "\"muted\"\\s*:\\s*(true|false)");
+            if (muted.Success) muteAlertsBox.SetCheckedSilently(muted.Groups[1].Value == "true");
+
             var m = Regex.Match(body, "\"connectedOverlays\"\\s*:\\s*(\\d+)");
             if (!m.Success) return;
             int count = int.Parse(m.Groups[1].Value);
@@ -1518,6 +1679,166 @@ class MainForm : Form
         {
             reloadOverlaysButton.Enabled = true;
         }
+    }
+
+    // ---------- Mute Alerts ----------
+
+    // Mute lives in the running bot, not here, so that it holds however the
+    // alert was triggered. The tick is only a remote control for it, which
+    // is also why it is not saved: the bot forgets on restart by design,
+    // and a tick that claimed otherwise would be lying.
+    private async void OnMuteAlertsChanged(object sender, EventArgs e)
+    {
+        bool wanted = muteAlertsBox.Checked;
+
+        if (botProcess == null)
+        {
+            AppendLog("Start the bot first -- muting only applies while the alert server is running.");
+            muteAlertsBox.SetCheckedSilently(false);
+            return;
+        }
+
+        string port = GetEnvValue("ALERT_SERVER_PORT", "8090");
+        try
+        {
+            await Http.GetStringAsync("http://localhost:" + port + "/mute-alerts?muted=" + (wanted ? "1" : "0"));
+            AppendLog(wanted
+                ? "Alert audio muted. Alerts still appear on the overlay, they just make no sound."
+                : "Alert audio unmuted.");
+        }
+        catch (Exception ex)
+        {
+            AppendLog("Could not reach the alert server: " + ex.Message);
+            // Show what is actually true rather than what was asked for.
+            muteAlertsBox.SetCheckedSilently(!wanted);
+        }
+    }
+
+    // ---------- Report an Issue ----------
+
+    private void OnReportIssueClick(object sender, EventArgs e)
+    {
+        AppendLog("Opening the issue tracker in your browser. Include the version (v" + AppVersion + ") and anything from the log above.");
+        OpenUrl("https://github.com/CruddOCE/twitch-bot/issues/new");
+    }
+
+    // ---------- Update check on launch ----------
+
+    // Checks whether GitHub is ahead and says so; it deliberately does not
+    // pull. Windows will not let git overwrite a running .exe, and this
+    // one is running, so a background update would fail exactly when the
+    // panel is open. Applying stays the Update button, which closes the
+    // app first.
+    private void CheckForUpdatesInBackground()
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = ResolveNodePath(),
+                Arguments = "\"" + Path.Combine(rootDir, "scripts", "checkUpdate.js") + "\"",
+                WorkingDirectory = rootDir,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            };
+
+            var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
+            var output = new StringBuilder();
+            proc.OutputDataReceived += (s, ev) => { if (ev.Data != null) output.AppendLine(ev.Data); };
+            proc.Exited += (s, ev) =>
+            {
+                string text = output.ToString();
+                BeginInvoke(new Action(() =>
+                {
+                    OnUpdateCheckFinished(text);
+                    proc.Dispose();
+                }));
+            };
+
+            proc.Start();
+            proc.BeginOutputReadLine();
+        }
+        catch (Exception)
+        {
+            // Being unable to check is not worth a log line on every
+            // launch; the Update button still works by hand.
+        }
+    }
+
+    private void OnUpdateCheckFinished(string output)
+    {
+        var match = Regex.Match(output, @"UPDATE_AVAILABLE=(\d+)");
+        if (!match.Success) return;
+
+        int behind = int.Parse(match.Groups[1].Value);
+        if (behind == 0) return;
+
+        AppendLog("An update is available (" + behind + " new commit" + (behind == 1 ? "" : "s") +
+            " on GitHub). Press Update in the left rail to apply it. The app will close, update, and reopen.");
+
+        // Relabelled rather than promoted to Primary. Start Bot is meant to
+        // be the only accent-filled control on screen, and an update is not
+        // urgent enough to start competing with it for attention.
+        updateButton.Text = "Update available";
+    }
+
+    // ---------- Panel preferences ----------
+
+    // Panel-local display settings, kept in the registry rather than in
+    // config/*.json. Those files are the bot's configuration and are
+    // stashed and reapplied by the updater; these are preferences for this
+    // window on this machine, and the Run entry already proves the
+    // registry path works without a new assembly reference or a JSON
+    // parser on the C# side.
+    private const string PrefKeyPath = @"Software\twitch-bot";
+    private const string PrefTimestamps = "ChatTimestamps";
+    private const string PrefHighlightMentions = "HighlightMentions";
+    private const string PrefChatZoom = "ChatZoomPercent";
+    private const string PrefCheckUpdates = "CheckUpdatesOnLaunch";
+
+    private string GetPref(string name, string defaultValue)
+    {
+        try
+        {
+            using (var key = Registry.CurrentUser.OpenSubKey(PrefKeyPath))
+            {
+                if (key == null) return defaultValue;
+                var value = key.GetValue(name) as string;
+                return value == null ? defaultValue : value;
+            }
+        }
+        catch (Exception)
+        {
+            return defaultValue;
+        }
+    }
+
+    private bool GetPref(string name, bool defaultValue)
+    {
+        return GetPref(name, defaultValue ? "1" : "0") == "1";
+    }
+
+    private void SetPref(string name, string value)
+    {
+        try
+        {
+            using (var key = Registry.CurrentUser.CreateSubKey(PrefKeyPath))
+            {
+                key.SetValue(name, value);
+            }
+        }
+        catch (Exception)
+        {
+            // A display preference is not worth interrupting a stream over.
+            // It just reverts to the default next launch.
+        }
+    }
+
+    private void SetPref(string name, bool value)
+    {
+        SetPref(name, value ? "1" : "0");
     }
 
     // ---------- Start with Windows ----------
@@ -1769,10 +2090,18 @@ class MainForm : Form
         bool isBroadcaster = parts[3] == "1";
         string text = DecodeBase64(parts[4]);
 
+        if (isMod || isBroadcaster) knownMods.Add(username);
+        bool mentionsMod = highlightMentionsBox.Checked && MentionsKnownMod(text);
+
         chatBox.SelectionStart = chatBox.TextLength;
         chatBox.SelectionLength = 0;
 
-        AppendColored(chatBox, DateTime.Now.ToString("HH:mm:ss "), Theme.TextDim, Theme.Small);
+        // Set once for the whole row rather than per run, so the highlight
+        // reads as one continuous band instead of striping around the gaps
+        // between timestamp, badge, name and message.
+        chatBox.SelectionBackColor = mentionsMod ? Theme.Surface3 : Theme.Surface2;
+
+        if (timestampsBox.Checked) AppendColored(chatBox, DateTime.Now.ToString("HH:mm:ss "), Theme.TextDim, Theme.Small);
 
         if (isBroadcaster) AppendColored(chatBox, "[HOST] ", Theme.Accent, Theme.Micro);
         else if (isMod) AppendColored(chatBox, "[MOD] ", Theme.Ok, Theme.Micro);
@@ -1780,8 +2109,29 @@ class MainForm : Form
         AppendColored(chatBox, username + ": ", ColorForUsername(username), Theme.BodyBold);
         AppendColored(chatBox, text + Environment.NewLine, Theme.Text, Theme.Body);
 
+        // Reset, or every later line inherits the highlight.
+        chatBox.SelectionBackColor = Theme.Surface2;
+
         chatBox.ScrollToCaret();
         TrimIfTooLong(chatBox);
+    }
+
+    // A mod is anyone who has spoken with the mod or broadcaster flag set
+    // this session, so the set fills in as chat happens rather than needing
+    // a Twitch API call for a list that barely changes.
+    //
+    // Matches "@name" only. A bare mention of a mod's name in normal
+    // conversation is common enough that highlighting it would mean
+    // highlighting most of chat, which highlights nothing.
+    private bool MentionsKnownMod(string text)
+    {
+        if (knownMods.Count == 0) return false;
+
+        foreach (Match m in Regex.Matches(text, @"@([A-Za-z0-9_]{2,25})"))
+        {
+            if (knownMods.Contains(m.Groups[1].Value)) return true;
+        }
+        return false;
     }
 
     private void AppendColored(RichTextBox box, string text, Color color, Font font)
