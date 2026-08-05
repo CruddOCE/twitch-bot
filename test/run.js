@@ -157,9 +157,11 @@ async function run() {
 
   handled = await commands.handle({ text: '!pp', username: 'weeb123', displayName: 'CoolViewer' }, ctx);
   assert.strictEqual(handled, true);
-  assert.match(replied, /^CoolViewer's pp is \d+ inches long!$/);
+  assert.match(replied, /^CoolViewer's pp is \d+ inches long and \d+ inches around!$/);
   const ppLength = Number(replied.match(/is (\d+) inches/)[1]);
   assert.ok(ppLength >= 1 && ppLength <= 100, `pp length ${ppLength} should be between 1 and 100`);
+  const ppGirth = Number(replied.match(/and (\d+) inches around/)[1]);
+  assert.ok(ppGirth >= 1 && ppGirth <= 25, `pp girth ${ppGirth} should be between 1 and 25`);
   console.log('builtin command (!pp): ok');
 
   handled = await commands.handle({ text: '!so somestreamer', username: 'viewer1', isMod: false, isBroadcaster: false }, ctx);
@@ -220,7 +222,7 @@ async function run() {
   );
   assert.strictEqual(handled, true);
   const firstPpReply = replied;
-  assert.match(firstPpReply, /inches long!$/);
+  assert.match(firstPpReply, /inches around!$/);
 
   handled = await commands.handle(
     { text: '!pp', username: 'cooldownTestUser', displayName: 'CDUser', isMod: false, isBroadcaster: false },

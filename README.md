@@ -47,7 +47,7 @@ Issues and pull requests are welcome, but please assume rough edges.
 - Built-in commands: `!commands`, `!uptime`, `!joke` (random clean joke from
   `config/jokes.json`, no racist material, add/remove your own anytime),
   `!so` (mod-only shoutout that looks up the target on Twitch, or falls back to
-  the last raider), `!pp` (random 1-100 inch joke command).
+  the last raider), `!pp` (random length and girth joke command).
 - Custom commands you define yourself in `config/commands.json`, with no code
   editing, and changes apply live (no restart needed).
 - Auto-moderation: banned words, link blocking (with an allowlist), excessive
@@ -213,7 +213,7 @@ on Twitch's developer console unless you specifically want your own app.
 | `!uptime` | anyone | How long the bot has been running |
 | `!commands` | anyone | Lists every available command |
 | `!joke` | anyone | Random joke, also fires an OBS alert (popup + chime + spoken voice) |
-| `!pp` | anyone | Silly random-length joke, also fires an OBS alert |
+| `!pp` | anyone | Silly random length and girth joke, also fires an OBS alert |
 | `!so [username]` | mods/broadcaster | Shoutout to an explicit target, or falls back to the last raider; also fires an OBS alert. Raids get this automatically too (see below) |
 | `!lurk` | anyone | Announces you're lurking |
 | `!unlurk` | anyone | Announces you're back |

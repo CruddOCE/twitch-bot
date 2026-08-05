@@ -56,8 +56,12 @@ const BUILTINS = {
   },
   pp: (message) => {
     const name = message.displayName || message.username;
+    // Two independent rolls, and girth is capped well below length on purpose:
+    // matching ranges produces results like "90 long and 90 around", which
+    // stops reading as a joke and starts reading as a bug.
     const length = Math.floor(Math.random() * 100) + 1;
-    const reply = `${name}'s pp is ${length} inches long!`;
+    const girth = Math.floor(Math.random() * 25) + 1;
+    const reply = `${name}'s pp is ${length} inches long and ${girth} inches around!`;
     alertServer.alert('pp', reply);
     alertServer.speak(reply);
     return reply;
