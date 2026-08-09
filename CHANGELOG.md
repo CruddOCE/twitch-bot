@@ -1,5 +1,96 @@
 # Changelog
 
+## 0.6.0 (2026-08-09)
+
+Two features, both of them fixes for things that wasted real stream time: an
+overlay that could not recover itself when OBS started first, and a bug report
+that arrived with no picture of the bug.
+
+Nothing here has been used on a live stream yet. See **Still needs testing**
+at the bottom.
+
+### Added
+
+- **Overlay recovery through OBS.** Reload Overlays used to answer "no OBS
+  overlay is connected" and stop there, which is precisely the case you press
+  it in. It now goes in through OBS's own WebSocket and refreshes the Browser
+  Source directly, so an overlay that never loaded can be recovered without
+  deleting and re-adding the source.
+
+  This is the fix for having to re-add the overlay every session. When OBS
+  starts before the bot, the Browser Source asks for the overlay, gets a
+  connection refused and renders an error page. The overlay's own reconnect
+  loop is script inside the page, and an error page runs no script, so nothing
+  is left alive in there to reconnect. Broadcasting over the WebSocket cannot
+  reach it either, because it was never connected. Driving OBS from the outside
+  is the only route back.
+- **`npm run obs-refresh`**, the same recovery as a standalone script. It finds
+  every browser source pointing at the overlay and presses OBS's own "Refresh
+  cache of current page". Sources are matched on their URL rather than their
+  name, so a renamed source and a copy in each scene are all caught.
+- **Screenshots on bug reports.** Report an Issue now asks for a screenshot
+  first, copies it to your clipboard, and opens the tracker with the version,
+  your Windows build and a short template already filled in. Paste it into the
+  issue body with Ctrl+V.
+
+  The paste is manual and cannot be automated away: GitHub accepts an image
+  only by paste or drag into its own editor, with no link or parameter that
+  attaches one. The clipboard carries both the image and the file, so if a
+  paste does not take, dragging the file in works instead. A screenshot is
+  optional, and skipping it still gets you the prefilled template.
+- **Girth on `!pp`**, alongside the existing length.
+
+### Fixed
+
+- An empty OBS password box beat a correct password in `.env`. The panel passed
+  the empty value to the OBS scripts regardless, and dotenv will not overwrite
+  a variable that is already defined, so the file was never consulted and
+  authentication failed. The box is now omitted when empty.
+- The saved OBS WebSocket password was stale, almost certainly since the OBS
+  reinstall in July, which regenerates it. Both OBS scripts now fall back to
+  reading it from OBS's own `plugin_config/obs-websocket/config.json`, so it
+  cannot silently rot again.
+- A wrong OBS password used to look identical to OBS not running. It is not an
+  error, it is close code 4009 with no reply, so the connection just went quiet
+  and timed out. It is now reported as a wrong password.
+
+### Changed
+
+- The OBS password field is optional, now that both OBS actions fall back to
+  the password OBS itself has saved.
+- The obs-websocket handshake moved into `src/obsWebSocket.js`, shared by
+  `scripts/addObsSource.js` and the new `scripts/refreshObsSource.js` instead
+  of living inside the former.
+
+### Still needs testing
+
+Everything carried over from 0.5.16 is still outstanding:
+
+- The Mute Alerts and Check for updates on launch ticks. Both are custom
+  controls that synthetic clicks cannot drive, so they were verified by driving
+  the code behind them instead.
+- Chat timestamps and mod-mention highlighting, which need live chat with a
+  moderator present to see.
+
+New in this release:
+
+- **The cold start that motivated the whole feature.** Recovery was proved by
+  reproducing the fault deliberately: a browser source was pointed at a port
+  with nothing listening, which produced the identical error page, and the
+  refresh took the connected count from 0 to 1. What has not happened yet is
+  an ordinary session where OBS opens first and the button is pressed for
+  real.
+- **Whether the screenshot actually pastes into GitHub's editor.** The dialog
+  runs end to end and the clipboard is confirmed to carry both the image and
+  the file path afterwards, but proving the paste needs a signed-in browser
+  and a real issue draft.
+
+### Known gap
+
+A scene switch still will not recover a dead overlay, because
+`restart_when_active` is not set on the browser source. Reload Overlays is the
+route back for now.
+
 ## 0.5.16 (2026-08-03)
 
 Completes Phase 1 of `FEATURES-TO-ADD.md`. Six new controls, five of them in

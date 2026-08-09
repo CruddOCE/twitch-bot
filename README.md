@@ -5,24 +5,28 @@ on your own machine (no hosting required). This is a leaner, Twitch-only
 sibling of [stream-bot](https://github.com/CruddOCE/stream-bot): same core
 engine, no YouTube setup, no Google Cloud project needed.
 
-## Status: 0.5.16, undergoing testing
+## Status: 0.6.0, undergoing testing
 
 **This is a personal project under active development, and parts of it have
 not been tested on a real stream yet.** It works, and the offline test suite
 passes, but "passes its tests" and "proven live in front of viewers" are not
 the same thing. Treat it accordingly if you run it on your own channel.
 
-**0.5.16 completes Phase 1** of [`FEATURES-TO-ADD.md`](FEATURES-TO-ADD.md),
-the build-ordered backlog these features come from. It adds Mute Alerts,
-Report an Issue, an update check on launch, and three chat display controls
-(timestamps, mod-mention highlighting, font size). Everything that could be
-verified without a live audience was, and [`CHANGELOG.md`](CHANGELOG.md) has
-the full list.
+**0.6.0 adds overlay recovery through OBS and screenshots on bug reports.**
+Reload Overlays can now rescue an overlay that never loaded at all, which is
+the case you actually press it in, and Report an Issue collects a screenshot
+before opening the tracker. [`CHANGELOG.md`](CHANGELOG.md) has the full list,
+including the diagnosis behind the overlay fix.
+
+**0.5.16 completed Phase 1** of [`FEATURES-TO-ADD.md`](FEATURES-TO-ADD.md),
+the build-ordered backlog these features come from, adding Mute Alerts, Report
+an Issue, an update check on launch, and three chat display controls
+(timestamps, mod-mention highlighting, font size).
 
 The earlier untested items from 0.5.15 have since been confirmed working:
 spoken alerts inside OBS, cooldowns and timers against live chat, the control
-panel's running state, the Reconnect button, Reload Overlays, and Start with
-Windows.
+panel's running state, the Reconnect button, Reload Overlays against a
+connected overlay, and Start with Windows.
 
 These are what remain known-unverified rather than known-to-work:
 
@@ -32,9 +36,18 @@ These are what remain known-unverified rather than known-to-work:
   is covered by the test suite; the ticks themselves have not been clicked.
 - **Chat timestamps and mod-mention highlighting.** Both need live chat with
   a moderator present before the rendering can be seen.
-- **The Report an Issue button.** It calls the same helper the setup screen's
-  Node.js download link already uses, but the click itself has not been
-  fired.
+- **Overlay recovery on a real cold start.** It was proved by reproducing the
+  fault on purpose (a browser source pointed at a dead port, then refreshed,
+  taking the connected count from 0 to 1), but not yet by an ordinary session
+  where OBS happens to open before the bot.
+- **The screenshot pasting into GitHub.** Report an Issue has been driven end
+  to end, and the clipboard is confirmed to carry both the image and the file
+  path afterwards, but whether the paste lands in GitHub's editor needs a
+  signed-in browser and a real issue draft to prove.
+
+A scene switch will not recover a dead overlay either, since
+`restart_when_active` is not set on the browser source. Reload Overlays is the
+route back.
 
 `!title` and `!game` only work when the bot account is the broadcaster, since
 Twitch only lets a channel's own token change its info.
@@ -117,14 +130,23 @@ The **left rail** holds:
 
 - **Dashboard** and **Setup** navigation.
 - **OBS**: your OBS WebSocket password (Tools > WebSocket Server Settings >
-  Show Connect Info), plus **Add Browser Source**, which adds the overlay to
-  your current scene automatically with audio already routed, **Test
-  Alert**, which fires a real alert and spoken test message through the
-  running bot's alert server so you can confirm OBS is connected before
-  going live, and **Reload Overlays**, which force-refreshes every connected
-  browser source. Reload is the fix for an overlay that has gone stale or
-  stopped rendering, and unlike Test Alert it is safe to press mid-stream:
-  viewers see nothing, the page just reconnects.
+  Show Connect Info), which is optional now that both OBS actions fall back to
+  the password OBS itself has saved. Alongside it, **Add Browser Source**,
+  which adds the overlay to your current scene automatically with audio
+  already routed, **Test Alert**, which fires a real alert and spoken test
+  message through the running bot's alert server so you can confirm OBS is
+  connected before going live, and **Reload Overlays**, which force-refreshes
+  every connected browser source. Reload is the fix for an overlay that has
+  gone stale or stopped rendering, and unlike Test Alert it is safe to press
+  mid-stream: viewers see nothing, the page just reconnects.
+
+  If no overlay is connected at all, Reload Overlays goes in through OBS
+  instead and refreshes the Browser Source directly. That is the case you hit
+  when OBS starts before the bot: the source asks for the overlay, gets a
+  connection refused, and sits on an error page. Nothing runs on an error
+  page, so it cannot reconnect on its own and the button cannot talk to it,
+  which is why it has to be driven from the OBS end. It needs OBS's WebSocket
+  server enabled.
 - **Mute Alerts**: silences alert audio while alerts keep appearing on the
   overlay, for when you're mid-sentence or in a cutscene. This is not the
   same as pausing: a muted alert still plays and still passes, it just makes
@@ -146,8 +168,21 @@ The **left rail** holds:
   the Update button to **Update available**. It only ever checks: nothing is
   downloaded or applied until you press Update, since git cannot overwrite
   the running `.exe` anyway.
-- **Report an Issue**: opens the project's GitHub issue tracker in your
-  browser.
+- **Report an Issue**: asks for a screenshot of the problem, then opens the
+  project's GitHub issue tracker with the report already started.
+
+  Take a screenshot of the bug however you normally would, then drag the file
+  onto the dialog's drop zone (or click it to browse). Pressing **Open issue
+  tracker** copies that image to your clipboard and opens a new issue with the
+  version, your Windows build and a short template already filled in. Paste
+  the screenshot into the issue body with **Ctrl+V** and write up what
+  happened.
+
+  The paste is manual because GitHub accepts an image only by paste or drag
+  into its own editor: there is no way to attach one through a link. The
+  clipboard carries both the image and the file itself, so if a paste does not
+  take, dragging the file into the issue works instead. A screenshot is
+  optional, and skipping it still gets you the prefilled template.
 - **Update**: pulls the latest version from GitHub. Since Windows won't let
   git overwrite a running `.exe`, clicking this closes the app, updates, and
   reopens it automatically (a console window shows progress in between).
@@ -306,6 +341,19 @@ immediately.
    reconnects, with nothing shown to viewers. This beats OBS's own Refresh
    button when several scenes each carry a copy of the overlay, since they
    all get it at once.
+5. If the overlay shows as **not connected** (the readout says 0, or a test
+   alert reports nothing connected), the page never loaded in the first
+   place, which happens whenever OBS starts before the bot does. The URL
+   broadcast in step 4 cannot help there, because there is no page to
+   receive it. Click **Reload Overlays**, which detects this and refreshes
+   the source from the OBS side, or run:
+   ```
+   npm run obs-refresh
+   ```
+   Either one is the scripted version of opening the source's properties in
+   OBS and clicking "Refresh cache of current page". There is no need to
+   delete and re-add the source. Starting the bot before OBS avoids the
+   situation entirely.
 
 ## Updating
 

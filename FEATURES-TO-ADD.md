@@ -47,12 +47,18 @@ Effort estimates are against this repo at v0.5.1, not against a blank page.
 | Structured logging | `src/logger.js` |
 | Self-update with a detached watcher | `scripts/update.js`, Update button |
 
-### One live blocker
+### The one live blocker, now cleared
 
-Items 9 and 10 will not work until the Twitch token is re-authed. The
+Items 9 and 10 needed the Twitch token re-authed, because the
 `channel:manage:broadcast` scope was added to `src/twitchAuth.js` after the
-current `.env` token was issued. Setup step 3 has a Reconnect button for exactly
-this, but per `HANDOFF.md` that path has never been exercised.
+token in `.env` was issued. The Reconnect button on Setup step 3 exists for
+exactly this and had never been run. It has since been exercised, and `!title`
+and `!game` were confirmed working through it on 2026-08-03, so Phase 2 is
+unblocked.
+
+The re-auth is still worth planning around once, though. Items 11 to 14 each
+need a scope the current token does not carry, so add them all in the same pass
+rather than forcing a fresh sign-in per item. See item 9.
 
 ---
 
@@ -60,10 +66,15 @@ this, but per `HANDOFF.md` that path has never been exercised.
 
 No dependencies, no new subsystems. All of these can land in a single session.
 
-**All eight are built as of 2026-08-03.** Items 1 and 2 are tested. Items 3 to 8
-were built in one pass and carry their own verification notes; what is left
+**All eight are built as of 2026-08-03.** Item 2 is tested. Items 3 to 8 were
+built in one pass and carry their own verification notes; what is left
 unconfirmed in each case is either a custom tick that synthetic clicks cannot
 drive, or chat rendering that needs live chat to see.
+
+Items 1 and 3 were both extended in 0.6.0 and both have an untested path as a
+result: item 1 gained OBS-side recovery for an overlay that never loaded, and
+item 3 gained screenshot collection on a bug report. Neither has been used on a
+live stream. Item 1 is therefore no longer a flat DONE.
 
 One thing worth knowing before adding another rail control: the rail is a fixed
 stack that cannot reflow, and it now sets the window's minimum height. Adding to
@@ -71,7 +82,9 @@ it without raising `Height`/`MinimumSize` in `MainForm` silently eats the
 readout rows from the top, which is exactly what happened during this pass.
 
 ### 1. Reload Overlays
-**DONE** (built 2026-08-01, tested 2026-08-03)
+**DONE, WITH A NEW PATH AWAITING TESTING** (built 2026-08-01, tested
+2026-08-03; recovery path added 2026-08-04, shipped in 0.6.0, not yet used on
+a live stream)
 *hours*
 **Does:** Force-refreshes the OBS browser source without touching OBS. The
 standard fix for an overlay that has gone stale or stopped rendering.
@@ -89,6 +102,34 @@ browser source on an isolated port. The page reloaded and the socket
 reconnected, confirmed by the connection count returning to 1. The control
 panel's button and the behaviour inside OBS were both confirmed on
 2026-08-03.
+
+**As built in 0.6.0, the case the original build could not handle.** Read the
+2026-08-03 verification as *confirmed against an overlay that was already
+connected*. It could not recover a disconnected one at all, which is the case
+the button gets pressed in. When OBS starts before the bot, the Browser Source
+gets a connection refused and renders an error page; nothing of ours runs on an
+error page, so the overlay's own reconnect loop is not alive in there, and
+broadcasting over the WebSocket reaches nobody because it was never connected.
+`OnReloadOverlaysClick` now runs `scripts/refreshObsSource.js` when the
+connected count is 0, going in through obs-websocket and pressing OBS's own
+`refreshnocache` properties button. Sources are matched on URL rather than
+name, so renamed sources and per-scene copies are all caught, with a fallback
+that re-sets the URL via `about:blank` if that property name is ever missing.
+The handshake was lifted into `src/obsWebSocket.js` so `addObsSource.js` shares
+it.
+
+**Verified:** by reproducing the fault rather than trusting the happy path. A
+temporary browser source was pointed at port 8091 with nothing listening,
+producing the identical error page; an alert server was then started on 8091
+and confirmed to still report `connectedOverlays:0`; running
+`refreshObsSource.js` took it to 1. The temporary source was removed and the
+scene returned to its original 8 browser sources. `addObsSource.js` was re-run
+under a throwaway `OBS_SOURCE_NAME` to prove the module extraction did not
+break it.
+**Not verified:** an ordinary session where OBS opens first and the button is
+pressed for real, rather than the fault being staged.
+**Still open:** `restart_when_active` is not set on the source, so a scene
+switch will not recover it either. Deliberately out of scope for that pass.
 
 ### 2. Load on startup
 **DONE** (built 2026-08-01, tested 2026-08-03)
@@ -112,7 +153,8 @@ reach (a synthetic `WM_LBUTTONDOWN` does not drive a custom control the way
 `BM_CLICK` drives a real Button).
 
 ### 3. Report an issue
-**BUILT, AWAITING TESTING** (2026-08-03)
+**BUILT, AWAITING TESTING** (2026-08-03; extended with screenshots 2026-08-04,
+shipped in 0.6.0)
 *hours*
 **Does:** Opens a route to file a bug or request.
 **How:** `src/openBrowser.js` already exists. Point it at the GitHub issues page.
@@ -121,10 +163,30 @@ One function call.
 Update. It logs a line naming the version before opening
 `github.com/CruddOCE/twitch-bot/issues/new`, since a report without a version
 number is most of a wasted round trip.
-**Verified:** the button renders and is reachable.
-**Not verified:** the click itself, which was left alone rather than firing a
-browser window into the middle of a working session. It calls `OpenUrl`, the
-same helper the setup screen's Node.js download link already uses.
+**As built in 0.6.0, screenshots.** A blank issue form asks the reporter to
+describe a visual bug in prose. The button now opens an `IssueDialog` first,
+which takes the screenshot they already have, puts it on the clipboard, and
+opens the issue with a template, the version and the Windows build prefilled.
+One Ctrl+V is the floor and everything up to it is automated: **GitHub accepts
+an image only by paste or drag into its own editor**, with no URL parameter and
+no attachment endpoint. Committing the image needs write access a reporter will
+not have, and an external image host means shipping a user's screenshot off
+their machine. Do not spend time looking for a way around this; it was looked
+for. `PutImageOnClipboard` sets a `DataObject` carrying **both** a `Bitmap` and
+a `FileDropList`, because a paste into a browser editor arrives as either
+depending on the browser, and carrying both is what makes it work first try.
+Size and extension are rejected in the dialog rather than left to GitHub, since
+a failed upload after the browser is already open reads as the tracker being
+broken. The dialog is a modal and **not** rail controls, because the rail is a
+fixed stack at the window's minimum height and anything added there clips the
+readout rows off the top.
+**Verified:** the button renders and is reachable; the dialog renders in the kit
+style; and the full path ran end to end on a real screenshot, logging the
+clipboard copy and opening the tracker. `FileDrop`, `FileNameW`, `FileName`,
+`System.Drawing.Bitmap` and `Bitmap` were all confirmed present on the
+clipboard afterwards.
+**Not verified:** that the paste itself lands in GitHub's editor. That needs a
+signed-in browser and a real issue draft.
 
 ### 4. Mute Alerts
 **BUILT, AWAITING TESTING** (2026-08-03)

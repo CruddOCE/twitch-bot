@@ -406,9 +406,243 @@ class NavItem : Button
     }
 }
 
+// The drop target for a bug reporter's screenshot. Painted with a dashed
+// border so it reads as "put something here" rather than as another button,
+// and clickable as well as droppable, because plenty of people will never
+// think to drag a file.
+class DropZone : Panel
+{
+    private bool hovering;
+    private string filePath = "";
+
+    public DropZone()
+    {
+        BackColor = Theme.Surface2;
+        Cursor = Cursors.Hand;
+        AllowDrop = true;
+        DoubleBuffered = true;
+
+        MouseEnter += (s, e) => { hovering = true; Invalidate(); };
+        MouseLeave += (s, e) => { hovering = false; Invalidate(); };
+        DragLeave += (s, e) => { hovering = false; Invalidate(); };
+    }
+
+    public string FilePath
+    {
+        get { return filePath; }
+        set { filePath = value == null ? "" : value; Invalidate(); }
+    }
+
+    protected override void OnDragEnter(DragEventArgs e)
+    {
+        if (e.Data.GetDataPresent(DataFormats.FileDrop))
+        {
+            e.Effect = DragDropEffects.Copy;
+            hovering = true;
+            Invalidate();
+        }
+        base.OnDragEnter(e);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using (var brush = new SolidBrush(Theme.Surface2)) e.Graphics.FillRectangle(brush, ClientRectangle);
+
+        var rect = new Rectangle(0, 0, Width - 1, Height - 1);
+        using (var path = Theme.RoundedRect(rect, Theme.RadiusMd))
+        {
+            using (var brush = new SolidBrush(hovering ? Theme.Surface3 : Theme.SurfaceInset))
+            {
+                e.Graphics.FillPath(brush, path);
+            }
+            using (var pen = new Pen(hovering ? Theme.Accent : Theme.Border))
+            {
+                pen.DashStyle = DashStyle.Dash;
+                e.Graphics.DrawPath(pen, path);
+            }
+        }
+
+        bool empty = filePath.Length == 0;
+        string label = empty ? "Drag your screenshot here, or click to browse" : Path.GetFileName(filePath);
+        TextRenderer.DrawText(e.Graphics, label, empty ? Theme.Small : Theme.SmallBold, ClientRectangle,
+            empty ? Theme.TextMuted : Theme.Text,
+            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+    }
+}
+
+// Asks for the reporter's screenshot before handing them to GitHub.
+//
+// It exists because GitHub takes an image only by paste or drag into its own
+// editor: there is no URL parameter and no API endpoint for an attachment.
+// So the most that can be automated is collecting the file, putting it on the
+// clipboard and opening a prefilled form, which leaves the reporter one
+// Ctrl+V rather than a blank page and no instructions.
+//
+// A dialog rather than controls in the rail: the rail is a fixed stack
+// already sitting at the window's minimum height, and anything added to it
+// clips the readout rows off the top.
+class IssueDialog : Form
+{
+    private const int MaxBytes = 10 * 1024 * 1024;   // GitHub's per-image limit
+    private static readonly string[] AllowedExtensions = { ".png", ".jpg", ".jpeg", ".gif" };
+
+    private readonly DropZone dropZone;
+    private readonly Label statusLabel;
+
+    public string ScreenshotPath { get; private set; }
+
+    public IssueDialog()
+    {
+        ScreenshotPath = "";
+
+        Text = "Report an Issue";
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        StartPosition = FormStartPosition.CenterParent;
+        MinimizeBox = false;
+        MaximizeBox = false;
+        ShowInTaskbar = false;
+        BackColor = Theme.Surface1;
+        Font = Theme.Body;
+        ClientSize = new Size(480, 283);
+
+        var card = new Card(Theme.Surface1);
+        card.Location = new Point(16, 16);
+        card.Size = new Size(448, 205);
+
+        var heading = new Label
+        {
+            Text = "Attach a screenshot",
+            Font = Theme.H2,
+            ForeColor = Theme.Text,
+            BackColor = Theme.Surface2,
+            Location = new Point(14, 12),
+            Size = new Size(420, 22),
+        };
+
+        var blurb = new Label
+        {
+            Text = "Take a screenshot of the problem, then drop it in below. It gets copied to your clipboard so you can paste it straight into the issue with Ctrl+V. Optional, but it makes a bug far easier to fix.",
+            Font = Theme.Small,
+            ForeColor = Theme.TextMuted,
+            BackColor = Theme.Surface2,
+            Location = new Point(14, 38),
+            Size = new Size(420, 48),
+        };
+
+        dropZone = new DropZone
+        {
+            Location = new Point(14, 92),
+            Size = new Size(420, 60),
+        };
+        dropZone.Click += (s, e) => Browse();
+        dropZone.DragDrop += OnZoneDragDrop;
+
+        var browseButton = new KitButton("Choose file...", BtnKind.Ghost, Theme.Surface2)
+        {
+            Location = new Point(14, 162),
+            Size = new Size(120, 30),
+        };
+        browseButton.Click += (s, e) => Browse();
+
+        statusLabel = new Label
+        {
+            Text = "",
+            Font = Theme.Small,
+            ForeColor = Theme.Warn,
+            BackColor = Theme.Surface2,
+            Location = new Point(144, 162),
+            Size = new Size(290, 30),
+        };
+
+        card.Controls.Add(heading);
+        card.Controls.Add(blurb);
+        card.Controls.Add(dropZone);
+        card.Controls.Add(browseButton);
+        card.Controls.Add(statusLabel);
+
+        var cancelButton = new KitButton("Cancel", BtnKind.Ghost, Theme.Surface1)
+        {
+            Location = new Point(16, 235),
+            Size = new Size(120, 32),
+            DialogResult = DialogResult.Cancel,
+        };
+
+        var openButton = new KitButton("Open issue tracker", BtnKind.Primary, Theme.Surface1)
+        {
+            Location = new Point(284, 235),
+            Size = new Size(180, 32),
+            DialogResult = DialogResult.OK,
+        };
+
+        Controls.Add(card);
+        Controls.Add(cancelButton);
+        Controls.Add(openButton);
+
+        AcceptButton = openButton;
+        CancelButton = cancelButton;
+    }
+
+    private void OnZoneDragDrop(object sender, DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
+        var files = (string[])e.Data.GetData(DataFormats.FileDrop);
+        if (files != null && files.Length > 0) Accept(files[0]);
+    }
+
+    private void Browse()
+    {
+        using (var picker = new OpenFileDialog())
+        {
+            picker.Title = "Choose a screenshot";
+            picker.Filter = "Images (*.png;*.jpg;*.jpeg;*.gif)|*.png;*.jpg;*.jpeg;*.gif|All files (*.*)|*.*";
+            if (picker.ShowDialog(this) == DialogResult.OK) Accept(picker.FileName);
+        }
+    }
+
+    // Rejecting here rather than letting GitHub reject it: an upload that
+    // fails after the browser is already open reads as the tracker being
+    // broken, and the reporter has no idea which of the two things went wrong.
+    private void Accept(string path)
+    {
+        if (!File.Exists(path))
+        {
+            Reject("That file no longer exists.");
+            return;
+        }
+
+        string extension = Path.GetExtension(path).ToLowerInvariant();
+        if (Array.IndexOf(AllowedExtensions, extension) < 0)
+        {
+            Reject("GitHub takes PNG, JPG or GIF images.");
+            return;
+        }
+
+        var info = new FileInfo(path);
+        if (info.Length > MaxBytes)
+        {
+            Reject("That image is over GitHub's 10MB limit (" + (info.Length / (1024 * 1024)) + "MB).");
+            return;
+        }
+
+        ScreenshotPath = path;
+        dropZone.FilePath = path;
+        statusLabel.ForeColor = Theme.Ok;
+        statusLabel.Text = "Ready to paste into the issue.";
+    }
+
+    private void Reject(string message)
+    {
+        ScreenshotPath = "";
+        dropZone.FilePath = "";
+        statusLabel.ForeColor = Theme.Warn;
+        statusLabel.Text = message;
+    }
+}
+
 class MainForm : Form
 {
-    private const string AppVersion = "0.5.16";
+    private const string AppVersion = "0.6.0";
     private const int RailWidth = 232;
     private const int TopBarHeight = 64;
 
@@ -1602,8 +1836,22 @@ class MainForm : Form
 
     private void OnObsButtonClick(object sender, EventArgs e)
     {
-        var env = new Dictionary<string, string> { { "OBS_WEBSOCKET_PASSWORD", obsPasswordBox.Text } };
-        RunNodeScriptOneShot("scripts/addObsSource.js", env, obsButton);
+        RunNodeScriptOneShot("scripts/addObsSource.js", ObsScriptEnv(), obsButton);
+    }
+
+    // The box is an override, not a requirement: the scripts fall back to the
+    // password OBS itself has saved. Passing it through empty would be worse
+    // than not passing it, since dotenv leaves an already-defined variable
+    // alone, so an empty string here beats a correct value in .env and fails
+    // the handshake.
+    private Dictionary<string, string> ObsScriptEnv()
+    {
+        var env = new Dictionary<string, string>();
+        if (!string.IsNullOrEmpty(obsPasswordBox.Text))
+        {
+            env["OBS_WEBSOCKET_PASSWORD"] = obsPasswordBox.Text;
+        }
+        return env;
     }
 
     // Fires a real alert + TTS through the running bot's alert server, so
@@ -1648,6 +1896,12 @@ class MainForm : Form
     // standard fix for an overlay that has gone stale or stopped rendering.
     // Unlike Test Alert this is safe to press on stream: nothing is shown
     // to viewers, the page just reconnects.
+    //
+    // When nothing is connected it goes in through OBS instead. That case is
+    // not "you forgot to add the source", it is usually OBS having started
+    // before the bot: the source requested the overlay, got a connection
+    // refused, and is sitting on an error page. No script runs on an error
+    // page, so the page cannot be told anything and cannot recover itself.
     private async void OnReloadOverlaysClick(object sender, EventArgs e)
     {
         if (botProcess == null)
@@ -1658,13 +1912,16 @@ class MainForm : Form
 
         reloadOverlaysButton.Enabled = false;
         string port = GetEnvValue("ALERT_SERVER_PORT", "8090");
+        bool handedOffToScript = false;
 
         try
         {
             string response = await Http.GetStringAsync("http://localhost:" + port + "/reload-overlays");
             if (response.Contains("\"connectedOverlays\":0"))
             {
-                AppendLog("Nothing to reload -- no OBS overlay is connected. Add http://localhost:" + port + "/overlay.html as a Browser Source first.");
+                AppendLog("No overlay connected -- asking OBS to refresh the browser source itself...");
+                RunNodeScriptOneShot("scripts/refreshObsSource.js", ObsScriptEnv(), reloadOverlaysButton);
+                handedOffToScript = true;
             }
             else
             {
@@ -1677,7 +1934,8 @@ class MainForm : Form
         }
         finally
         {
-            reloadOverlaysButton.Enabled = true;
+            // RunNodeScriptOneShot owns the button until the script exits.
+            if (!handedOffToScript) reloadOverlaysButton.Enabled = true;
         }
     }
 
@@ -1718,8 +1976,83 @@ class MainForm : Form
 
     private void OnReportIssueClick(object sender, EventArgs e)
     {
-        AppendLog("Opening the issue tracker in your browser. Include the version (v" + AppVersion + ") and anything from the log above.");
-        OpenUrl("https://github.com/CruddOCE/twitch-bot/issues/new");
+        using (var dialog = new IssueDialog())
+        {
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+            string screenshot = dialog.ScreenshotPath;
+            if (!string.IsNullOrEmpty(screenshot))
+            {
+                if (PutImageOnClipboard(screenshot))
+                {
+                    AppendLog("Screenshot on the clipboard: " + Path.GetFileName(screenshot));
+                    AppendLog("Press Ctrl+V in the issue body on GitHub to attach it.");
+                }
+                else
+                {
+                    AppendLog("That image could not be read, so nothing was copied. Drag it into the issue instead: " + screenshot);
+                }
+            }
+
+            AppendLog("Opening the issue tracker in your browser. The version and your Windows build are filled in already.");
+            OpenUrl("https://github.com/CruddOCE/twitch-bot/issues/new?body=" + Uri.EscapeDataString(BuildIssueBody(screenshot)));
+        }
+    }
+
+    // Both formats go on the clipboard because a paste into a browser editor
+    // can arrive as either an image or a dropped file depending on the
+    // browser, and carrying both is the difference between this working first
+    // try and the reporter going hunting for the file themselves.
+    private bool PutImageOnClipboard(string path)
+    {
+        try
+        {
+            var data = new DataObject();
+            // Copied out of the file-backed Image, which otherwise holds a
+            // lock on the file for as long as it is alive.
+            using (var fromFile = Image.FromFile(path))
+            using (var copy = new Bitmap(fromFile))
+            {
+                data.SetImage(copy);
+                var files = new System.Collections.Specialized.StringCollection();
+                files.Add(path);
+                data.SetFileDropList(files);
+                Clipboard.SetDataObject(data, true);
+            }
+            return true;
+        }
+        catch (Exception ex)
+        {
+            AppendLog("Clipboard copy failed: " + ex.Message);
+            return false;
+        }
+    }
+
+    // A skeleton rather than an empty box. The three questions are the ones
+    // whose absence sends every bug report into a round trip, and the version
+    // and OS are filled in here because a reporter should not have to know
+    // where to find them.
+    private string BuildIssueBody(string screenshotPath)
+    {
+        var body = new StringBuilder();
+        body.AppendLine("**What happened**");
+        body.AppendLine();
+        body.AppendLine();
+        body.AppendLine("**What you expected instead**");
+        body.AppendLine();
+        body.AppendLine();
+        body.AppendLine("**Steps to reproduce**");
+        body.AppendLine("1. ");
+        body.AppendLine("2. ");
+        body.AppendLine();
+        body.AppendLine("**Screenshot**");
+        body.AppendLine(string.IsNullOrEmpty(screenshotPath)
+            ? "Drag one in here if you have one."
+            : "Paste it here with Ctrl+V, it is already on your clipboard.");
+        body.AppendLine();
+        body.AppendLine("---");
+        body.AppendLine("twitch-bot v" + AppVersion + " on " + Environment.OSVersion.VersionString);
+        return body.ToString();
     }
 
     // ---------- Update check on launch ----------
