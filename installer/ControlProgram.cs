@@ -688,6 +688,15 @@ class MainForm : Form
     private RichTextBox logBox;
     private bool chatIsEmpty = true;
 
+    // Channel title and category, in the content column rather than the rail:
+    // the rail is a fixed stack that already sets the window's minimum height,
+    // and text fields need width the rail's 232px does not have.
+    private TextBox channelTitleBox;
+    private TextBox channelCategoryBox;
+    private KitButton updateChannelButton;
+    private KitButton channelRefreshButton;
+    private Label channelHintLabel;
+
     // Chat display controls, kept in the chat card rather than the rail so
     // they sit next to what they affect.
     private KitCheck timestampsBox;
@@ -790,6 +799,11 @@ class MainForm : Form
         }
 
         if (nodeAvailable && autoUpdateBox.Checked) CheckForUpdatesInBackground();
+
+        // Unconditional, unlike the update check: this is not a network
+        // preference, it is the card being able to show what is live rather
+        // than two empty boxes. It fails quietly into a hint on the card.
+        ReadChannelInfoInBackground();
 
         // Without this the first rail button takes focus on open and
         // wears a focus ring, which reads as a second highlighted
@@ -1108,8 +1122,134 @@ class MainForm : Form
             catch { /* width not settled yet on some resizes; harmless to skip */ }
         };
 
+        // Fill before docked edges: dock resolution runs in reverse of add
+        // order, so the split has to go in first for the channel card to claim
+        // its strip above it rather than overlapping it.
         panel.Controls.Add(split);
+        panel.Controls.Add(new Panel { Dock = DockStyle.Top, Height = 16, BackColor = Theme.Surface1 });
+        panel.Controls.Add(BuildChannelCard());
         return panel;
+    }
+
+    // Both field rows start here, clear of the wider of the two labels
+    // ("Category"), so the inputs share a left edge instead of stepping in and
+    // out with the label text.
+    private const int FieldLeft = 76;
+
+    // Title and category editing. One Submit for both, because they are one
+    // Helix request and going live with a new game usually means changing both
+    // at once anyway.
+    private Card BuildChannelCard()
+    {
+        var card = new Card(Theme.Surface1) { Dock = DockStyle.Top, Height = 96, Padding = new Padding(12) };
+
+        // Children of a Card must restate the card's fill. They inherit
+        // BackColor from the control, which is set to the surrounding colour so
+        // the painted rounded corners show through, and would otherwise stamp
+        // that surround over the paint.
+        var header = new Label
+        {
+            Text = "CHANNEL",
+            Font = Theme.Micro,
+            ForeColor = Theme.TextDim,
+            BackColor = Theme.Surface2,
+            AutoSize = true,
+            Location = new Point(12, 8),
+        };
+
+        var titleLabel = new Label
+        {
+            Text = "Title",
+            Font = Theme.Small,
+            ForeColor = Theme.TextMuted,
+            BackColor = Theme.Surface2,
+            AutoSize = true,
+            Location = new Point(12, 32),
+        };
+
+        // 140 is Twitch's own cap. Enforced here so an over-long title is
+        // impossible to type rather than rejected after a round trip.
+        channelTitleBox = new TextBox
+        {
+            Location = new Point(FieldLeft, 29),
+            Font = Theme.Body,
+            BackColor = Theme.Surface3,
+            ForeColor = Theme.Text,
+            BorderStyle = BorderStyle.FixedSingle,
+            MaxLength = 140,
+        };
+
+        var categoryLabel = new Label
+        {
+            Text = "Category",
+            Font = Theme.Small,
+            ForeColor = Theme.TextMuted,
+            BackColor = Theme.Surface2,
+            AutoSize = true,
+            Location = new Point(12, 62),
+        };
+
+        channelCategoryBox = new TextBox
+        {
+            Location = new Point(FieldLeft, 59),
+            Font = Theme.Body,
+            BackColor = Theme.Surface3,
+            ForeColor = Theme.Text,
+            BorderStyle = BorderStyle.FixedSingle,
+        };
+
+        // Ghost, not Primary. Start Bot is meant to be the only accent-filled
+        // control on screen.
+        updateChannelButton = new KitButton("Update Channel", BtnKind.Ghost, Theme.Surface2);
+        updateChannelButton.Size = new Size(130, 26);
+        updateChannelButton.Font = Theme.Small;
+        updateChannelButton.Click += OnUpdateChannelClick;
+
+        // The panel is not the only thing that can change these: editing the
+        // title in Twitch's own dashboard would leave the boxes showing a stale
+        // value, and pressing Update would then quietly put the old one back.
+        // Same width as Update Channel so the two stack as one right-hand
+        // column rather than two ragged edges.
+        channelRefreshButton = new KitButton("Refresh", BtnKind.Ghost, Theme.Surface2);
+        channelRefreshButton.Size = new Size(130, 26);
+        channelRefreshButton.Font = Theme.Small;
+        channelRefreshButton.Click += OnChannelRefreshClick;
+
+        channelHintLabel = new Label
+        {
+            Text = "Reading current values...",
+            Font = Theme.Small,
+            ForeColor = Theme.TextDim,
+            BackColor = Theme.Surface2,
+            AutoSize = true,
+            Location = new Point(148, 8),
+        };
+
+        // Laid out by hand against the card's width, the same approach the chat
+        // toolbar uses. Both rows share one field left edge and one button
+        // column, so the card reads as a grid rather than four loose controls.
+        // The floor stops the fields collapsing behind the buttons when the
+        // window is dragged to its minimum width.
+        card.SizeChanged += (s, e) =>
+        {
+            int buttonLeft = Math.Max(FieldLeft + 140, card.ClientSize.Width - 12 - updateChannelButton.Width);
+            updateChannelButton.Location = new Point(buttonLeft, 29);
+            channelRefreshButton.Location = new Point(buttonLeft, 59);
+
+            int fieldWidth = Math.Max(120, buttonLeft - 12 - FieldLeft);
+            channelTitleBox.Width = fieldWidth;
+            channelCategoryBox.Width = fieldWidth;
+        };
+
+        card.Controls.Add(channelHintLabel);
+        card.Controls.Add(header);
+        card.Controls.Add(titleLabel);
+        card.Controls.Add(channelTitleBox);
+        card.Controls.Add(categoryLabel);
+        card.Controls.Add(channelCategoryBox);
+        card.Controls.Add(updateChannelButton);
+        card.Controls.Add(channelRefreshButton);
+        return card;
     }
 
     private Card BuildFeedCard(string headerText, out RichTextBox box, bool isChat, string placeholder, Control toolbar)
@@ -1973,6 +2113,123 @@ class MainForm : Form
     }
 
     // ---------- Report an Issue ----------
+
+    // ---------- Channel title and category ----------
+
+    private Dictionary<string, string> ChannelScriptEnv()
+    {
+        var env = new Dictionary<string, string>();
+        // Only non-empty values are passed. dotenv will not overwrite an
+        // already-defined variable, so passing an empty string here would beat
+        // anything in .env, which is the bug that made an empty OBS password
+        // box defeat a correct saved one.
+        if (!string.IsNullOrWhiteSpace(channelTitleBox.Text)) env["CHANNEL_TITLE"] = channelTitleBox.Text.Trim();
+        if (!string.IsNullOrWhiteSpace(channelCategoryBox.Text)) env["CHANNEL_CATEGORY"] = channelCategoryBox.Text.Trim();
+        return env;
+    }
+
+    private void OnUpdateChannelClick(object sender, EventArgs e)
+    {
+        if (!nodeAvailable)
+        {
+            AppendLog("Node.js is required to update the channel. See Setup.");
+            return;
+        }
+
+        var env = ChannelScriptEnv();
+        if (env.Count == 0)
+        {
+            AppendLog("Nothing to change: fill in a title or a category first.");
+            return;
+        }
+
+        // Deliberately not gated on the bot running. The token lives in .env,
+        // not in the bot process, and fixing a title is something you do before
+        // pressing Start Bot.
+        RunNodeScriptOneShot("scripts/setChannelInfo.js", env, updateChannelButton);
+    }
+
+    private void OnChannelRefreshClick(object sender, EventArgs e)
+    {
+        channelHintLabel.Text = "Reading current values...";
+        channelHintLabel.ForeColor = Theme.TextDim;
+        ReadChannelInfoInBackground();
+    }
+
+    // Prefills the two fields with what the channel currently has. Blank fields
+    // would be a trap: pressing Update with an empty title box reads as "clear
+    // the title", and there would be no way to tell "unchanged" from "erase".
+    //
+    // Captures stdout rather than going through RunNodeScriptOneShot, which
+    // streams into the activity log. This runs unprompted on launch, and two
+    // lines of machine-readable output in the log on every start is noise.
+    private void ReadChannelInfoInBackground()
+    {
+        if (!nodeAvailable) return;
+
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = ResolveNodePath(),
+                Arguments = "\"" + Path.Combine(rootDir, "scripts", "readChannelInfo.js") + "\"",
+                WorkingDirectory = rootDir,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            };
+
+            var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
+            var output = new StringBuilder();
+            proc.OutputDataReceived += (s, ev) => { if (ev.Data != null) output.AppendLine(ev.Data); };
+            proc.Exited += (s, ev) =>
+            {
+                string text = output.ToString();
+                BeginInvoke(new Action(() =>
+                {
+                    OnChannelInfoFinished(text);
+                    proc.Dispose();
+                }));
+            };
+
+            proc.Start();
+            proc.BeginOutputReadLine();
+        }
+        catch (Exception ex)
+        {
+            channelHintLabel.Text = "Could not read current values";
+            channelHintLabel.ForeColor = Theme.Danger;
+            AppendLog("Could not read the channel's current title: " + ex.Message);
+        }
+    }
+
+    private void OnChannelInfoFinished(string output)
+    {
+        var failure = Regex.Match(output, @"CHANNEL_INFO_FAILED=(.*)$", RegexOptions.Multiline);
+        if (failure.Success)
+        {
+            channelHintLabel.Text = "Could not read current values";
+            channelHintLabel.ForeColor = Theme.Danger;
+            AppendLog("Could not read the channel's current title and category: " + failure.Groups[1].Value.Trim());
+            return;
+        }
+
+        // Anchored to end-of-line so a title containing "=" survives intact.
+        var title = Regex.Match(output, @"CHANNEL_TITLE=(.*)$", RegexOptions.Multiline);
+        var category = Regex.Match(output, @"CHANNEL_CATEGORY=(.*)$", RegexOptions.Multiline);
+        if (!title.Success && !category.Success)
+        {
+            channelHintLabel.Text = "Could not read current values";
+            channelHintLabel.ForeColor = Theme.Danger;
+            return;
+        }
+
+        if (title.Success) channelTitleBox.Text = title.Groups[1].Value.TrimEnd('\r');
+        if (category.Success) channelCategoryBox.Text = category.Groups[1].Value.TrimEnd('\r');
+        channelHintLabel.Text = "Showing what is live now";
+        channelHintLabel.ForeColor = Theme.TextDim;
+    }
 
     private void OnReportIssueClick(object sender, EventArgs e)
     {

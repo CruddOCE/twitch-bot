@@ -3,7 +3,32 @@ const { openUrl } = require('./openBrowser');
 
 const PORT = 3940;
 const REDIRECT_URI = `http://localhost:${PORT}/callback`;
-const SCOPES = ['chat:read', 'chat:edit', 'moderator:manage:banned_users', 'channel:manage:broadcast'];
+// Every scope the bot asks for, granted in one sign-in.
+//
+// The read scopes at the bottom are for the channel-stats readouts (items 11
+// to 14 of FEATURES-TO-ADD.md) and are requested ahead of the code that uses
+// them on purpose: each one would otherwise force its own re-auth, and asking
+// someone to sign in five separate times to light up four numbers is worse
+// than asking for four harmless reads once.
+//
+// channel:manage:ads is deliberately NOT here, even though the roadmap groups
+// it with these. It authorises starting an ad break, which is irreversible,
+// viewer-facing and affects revenue, and nothing in this codebase runs ads
+// yet. It gets added when item 35 is built, not before. Adding it early would
+// mean a token that can run ads on the channel for months with no feature
+// behind it.
+const SCOPES = [
+  'chat:read',
+  'chat:edit',
+  'moderator:manage:banned_users',
+  'channel:manage:broadcast',
+  'moderator:read:followers',
+  'channel:read:subscriptions',
+  'moderator:read:chatters',
+  'channel:read:ads',
+  'channel:read:redemptions',
+  'bits:read',
+];
 const TIMEOUT_MS = 5 * 60 * 1000;
 
 // A shared Client ID so most users can just sign in, without registering

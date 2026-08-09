@@ -12,6 +12,11 @@ not been tested on a real stream yet.** It works, and the offline test suite
 passes, but "passes its tests" and "proven live in front of viewers" are not
 the same thing. Treat it accordingly if you run it on your own channel.
 
+**In progress since 0.6.0:** a Channel card on the dashboard for editing the
+stream title and category, described under **Setting the title and category**
+below. Built and reading correctly, but writing needs a token re-auth that has
+not happened on this install yet.
+
 **0.6.0 adds overlay recovery through OBS and screenshots on bug reports.**
 Reload Overlays can now rescue an overlay that never loaded at all, which is
 the case you actually press it in, and Report an Issue collects a screenshot
@@ -24,10 +29,10 @@ an Issue, an update check on launch, and three chat display controls
 (timestamps, mod-mention highlighting, font size).
 
 Confirmed working, having previously been untested: spoken alerts inside OBS,
-cooldowns and timers against live chat, the control panel's running state, the
-Reconnect button, Start with Windows, and both halves of Reload Overlays, the
-broadcast refresh and the OBS-side recovery of an overlay that never loaded.
-Report an Issue is confirmed end to end, screenshot paste included.
+cooldowns and timers against live chat, the control panel's running state,
+Start with Windows, and both halves of Reload Overlays, the broadcast refresh
+and the OBS-side recovery of an overlay that never loaded. Report an Issue is
+confirmed end to end, screenshot paste included.
 
 These are what remain known-unverified rather than known-to-work:
 
@@ -37,6 +42,10 @@ These are what remain known-unverified rather than known-to-work:
   is covered by the test suite; the ticks themselves have not been clicked.
 - **Chat timestamps and mod-mention highlighting.** Both need live chat with
   a moderator present before the rendering can be seen.
+- **Changing the title or category**, whether from the Channel card or with
+  `!title` and `!game`. All three need a token carrying
+  `channel:manage:broadcast`, and the flow that grants it has not been completed
+  on this install: see **Setting the title and category** below.
 
 A scene switch will not recover a dead overlay either, since
 `restart_when_active` is not set on the browser source. Reload Overlays is the
@@ -251,9 +260,53 @@ on Twitch's developer console unless you specifically want your own app.
 `!title`/`!game` call Twitch's API directly, which only allows a channel's
 own token to change its info. They only work when `TWITCH_BOT_USERNAME` is
 the broadcaster's own account, and the token needs the
-`channel:manage:broadcast` scope. If you set this bot up before that scope
-was added, re-run `npm run twitch-auth` (or the setup wizard) to get a
-token that includes it.
+`channel:manage:broadcast` scope. See **Setting the title and category** below
+if either command reports a permissions error.
+
+## Setting the title and category
+
+The **Channel** card at the top of the dashboard changes the stream title and
+category without opening Twitch's dashboard. The two fields arrive filled in
+with what is currently live, so you are editing what is there rather than
+typing it from memory, and **Update Channel** sends both as a single request.
+Leaving a field alone leaves that value alone; there is no way to clear either
+one, which matches Twitch, where a channel always has both.
+
+**Refresh** re-reads the live values. Worth pressing if you have changed the
+title in Twitch's own dashboard or with `!title` since the panel opened, since
+the fields would otherwise still hold the old text and Update would put it back.
+
+The category takes a name and has to match a real Twitch category, so a typo
+comes back as "could not find a game/category named ...". There is no
+autocomplete yet.
+
+Both fields, and `!title`/`!game`, need a token carrying
+`channel:manage:broadcast`. Without it Twitch answers with a 401 naming the
+missing scope and nothing changes. If you set the bot up before that scope
+existed, press **Reconnect** on Setup step 3, which signs in again and merges
+the new token into your `.env` without disturbing anything else in it. One
+Reconnect also picks up the read scopes the upcoming channel-stats readouts
+need, so this is a single sign-in rather than one per feature.
+
+To read the live values from a terminal:
+
+```bash
+npm run channel-read
+```
+
+Reading needs no scopes at all, since channel information is public, so this
+working tells you your Client ID and token are valid but says nothing about
+whether you can *write*. To change them from a terminal instead of the panel,
+in PowerShell:
+
+```bash
+$env:CHANNEL_TITLE = "new title"; npm run channel-set
+```
+
+`$env:CHANNEL_CATEGORY` does the category, and setting both before running it
+sends one request. That path is also how to test a write without going through
+the panel, which matters because the panel's text fields cannot be driven by
+automation.
 
 Add your own in `config/commands.json`:
 ```json

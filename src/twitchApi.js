@@ -75,6 +75,52 @@ async function getChannelInfo(username) {
   };
 }
 
+// Reads the channel's current title and category.
+//
+// Separate from getChannelInfo above, which serves !so: that one returns a
+// different shape, has no title in it, and gives up silently when there is no
+// client secret, which is the right call for a chat command and the wrong one
+// here. The control panel prefills its edit fields from this, and a field that
+// silently arrives empty is worse than an error, because submitting it would
+// read as "clear the title".
+//
+// Throws rather than returning null, so the caller can say why it failed.
+// Kept self-contained rather than sharing a broadcaster-ID helper with
+// updateChannelInfo below: that function is confirmed working against the live
+// API and is not worth disturbing to save six lines.
+async function getChannelSettings(broadcasterLogin) {
+  const clientId = process.env.TWITCH_CLIENT_ID;
+  const userToken = (process.env.TWITCH_OAUTH_TOKEN || '').replace(/^oauth:/, '');
+  if (!clientId || !userToken) {
+    throw new Error('Missing TWITCH_CLIENT_ID / TWITCH_OAUTH_TOKEN.');
+  }
+  if (!broadcasterLogin) {
+    throw new Error('No channel given.');
+  }
+
+  // Both calls below are public reads, so the app token is preferred but the
+  // user token works just as well -- which is what makes this usable without
+  // a client secret configured.
+  const readToken = (await getAppToken().catch(() => null)) || userToken;
+  const headers = { 'Client-Id': clientId, Authorization: `Bearer ${readToken}` };
+
+  const userRes = await fetch(`https://api.twitch.tv/helix/users?login=${encodeURIComponent(broadcasterLogin)}`, {
+    headers,
+  });
+  if (!userRes.ok) throw new Error(`Could not look up channel "${broadcasterLogin}" (${userRes.status}).`);
+  const userData = await userRes.json();
+  const broadcasterId = userData.data && userData.data[0] && userData.data[0].id;
+  if (!broadcasterId) throw new Error(`Unknown channel "${broadcasterLogin}".`);
+
+  const channelRes = await fetch(`https://api.twitch.tv/helix/channels?broadcaster_id=${broadcasterId}`, { headers });
+  if (!channelRes.ok) throw new Error(`Could not read channel information (${channelRes.status}).`);
+  const channelData = await channelRes.json();
+  const channel = channelData.data && channelData.data[0];
+  if (!channel) throw new Error('Twitch returned no channel information.');
+
+  return { title: channel.title || '', gameName: channel.game_name || '' };
+}
+
 // Updates the channel's title and/or category via Helix's "Modify Channel
 // Information" endpoint. Twitch only allows a channel's own user token to
 // change its info, so this only works when TWITCH_OAUTH_TOKEN belongs to
@@ -125,4 +171,4 @@ async function updateChannelInfo(broadcasterLogin, { title, gameName } = {}) {
   }
 }
 
-module.exports = { getChannelInfo, updateChannelInfo };
+module.exports = { getChannelInfo, getChannelSettings, updateChannelInfo };

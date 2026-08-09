@@ -47,18 +47,30 @@ Effort estimates are against this repo at v0.5.1, not against a blank page.
 | Structured logging | `src/logger.js` |
 | Self-update with a detached watcher | `scripts/update.js`, Update button |
 
-### The one live blocker, now cleared
+### The one live blocker, still live
 
-Items 9 and 10 needed the Twitch token re-authed, because the
-`channel:manage:broadcast` scope was added to `src/twitchAuth.js` after the
-token in `.env` was issued. The Reconnect button on Setup step 3 exists for
-exactly this and had never been run. It has since been exercised, and `!title`
-and `!game` were confirmed working through it on 2026-08-03, so Phase 2 is
-unblocked.
+**The token in `.env` does not carry `channel:manage:broadcast`.** Validated
+against `https://id.twitch.tv/oauth2/validate` on 2026-08-09, it holds exactly
+three scopes: `chat:read`, `chat:edit`, `moderator:manage:banned_users`. That is
+the scope list from *before* `channel:manage:broadcast` was added to
+`src/twitchAuth.js`, so the token predates the addition and the re-auth that
+would have picked it up never completed.
 
-The re-auth is still worth planning around once, though. Items 11 to 14 each
-need a scope the current token does not carry, so add them all in the same pass
-rather than forcing a fresh sign-in per item. See item 9.
+This corrects an earlier claim in this file and in `HANDOFF.md` that the
+blocker was cleared on 2026-08-03 and that `!title` and `!game` were confirmed
+working. They were not, and cannot have been: Twitch answers the write with a
+401 naming the missing scope. `!title` and `!game` have never worked on this
+install.
+
+**Clearing it takes one press.** Setup step 3, Reconnect. It runs
+`scripts/connectAccount.js`, which merges the new token into `.env` rather than
+overwriting it, and reads `SCOPES` at the time it runs, so a single sign-in now
+grants all ten scopes including the six read scopes for items 11 to 14. That is
+the batching this section used to recommend planning for, and it now happens by
+itself on the next Reconnect.
+
+Everything else about items 9 and 10 works. The reads are confirmed against the
+live API, and the write is confirmed correct up to authorisation.
 
 ---
 
@@ -301,7 +313,13 @@ test asserts the script never references a mutating git verb.
 The best value per line of new code in the document, because the API call is
 already written.
 
+**Both items are built as of 2026-08-09.** The reads work against the live API;
+the writes are correct but unauthorised until the token is re-authed, which is
+one press of Reconnect on Setup step 3. See "The one live blocker, still live"
+near the top of this file: it turned out never to have been cleared.
+
 ### 9. Stream title editing
+**BUILT, AWAITING A RE-AUTH** (2026-08-09)
 *a day*
 **Does:** Change the live title from the control panel, without opening the Twitch
 dashboard.
@@ -312,20 +330,81 @@ a call into existing code.
 **Blocked on:** the `channel:manage:broadcast` re-auth. It also only works when
 the bot account IS the broadcaster, which is true here (both are `cruddoce`).
 
-**Do the scope work once.** Items 11 to 14 each need a different new scope, and
-this item already forces a re-auth. Add every scope the roadmap needs to
-`src/twitchAuth.js` in this one pass so there is a single re-auth rather than
-five: `moderator:read:followers`, `channel:read:subscriptions`,
-`moderator:read:chatters`, `channel:read:ads`, `channel:manage:ads`,
-`channel:read:redemptions`, `bits:read`.
+**The scope work is done.** `SCOPES` in `src/twitchAuth.js` now carries the six
+read scopes items 11 to 14 need (`moderator:read:followers`,
+`channel:read:subscriptions`, `moderator:read:chatters`, `channel:read:ads`,
+`channel:read:redemptions`, `bits:read`) alongside the four it already had, so
+one Reconnect grants everything Phases 2 and 3 want rather than one sign-in per
+item. A test pins the list, because a scope going missing surfaces later as a
+401 a long way from the cause.
+
+**`channel:manage:ads` was deliberately left out**, against this document's
+original advice. It authorises starting an ad break: irreversible,
+viewer-facing, and with revenue consequences. Nothing here runs ads, and item 35
+is in Phase 6. It gets added when that item is built, so the token cannot run
+ads months before the feature exists. That costs one extra re-auth then, which
+is the cheaper side of the trade.
+
+**As built.** A `CHANNEL` card at the top of the dashboard content column,
+holding a Title field (capped at Twitch's own 140 characters), a Category field,
+one **Update Channel** button submitting both as a single Helix request, and a
+**Refresh** button. In the content column and not the rail, because the rail is a
+fixed stack already setting the window's minimum height and text fields need
+more width than its 232px.
+
+The button runs `scripts/setChannelInfo.js` through the existing
+`RunNodeScriptOneShot`, passing the values as environment variables the way the
+OBS password is passed. A script rather than an endpoint on the alert server,
+deliberately: the token lives in `.env` rather than in the bot process, so an
+endpoint would mean the bot had to be running before a title could be fixed, and
+fixing the title is something you do *before* pressing Start Bot. It is also the
+only shape that can be tested, since GUI text fields could not be driven by any
+automation tried on this project, and running the script directly with the same
+variables the button passes is the documented way around that.
+
+**The fields prefill from the live channel**, via a new
+`getChannelSettings()` in `src/twitchApi.js` and `scripts/readChannelInfo.js`,
+which prints `CHANNEL_TITLE=` and `CHANNEL_CATEGORY=` lines for the panel to
+parse. Empty boxes would be a trap: pressing Update with a blank title reads as
+"clear the title", with no way to distinguish unchanged from erase. The read is
+a separate function from `getChannelInfo()`, which serves `!so`, returns a
+different shape with no title in it, and gives up silently without a client
+secret. Refresh exists because Twitch's own dashboard can change these behind
+the panel's back, and a stale field would quietly put the old value back.
+
+**Verified:** the read path against the live API, printing the real current title
+and category, which also proves the app-token-or-user-token fallback works with
+no client secret configured. The fields arrive prefilled in the real window,
+screenshotted. Three offline tests: the scope list, the empty-submission guard,
+and the missing-credentials guard.
+
+**Verified as far as authorisation, on the write path.** A real submission was
+attempted on 2026-08-09 and Twitch answered `401 Missing scope:
+user:edit:broadcast or channel:manage:broadcast or channel_editor`. That is a
+better result than it sounds: reaching a scope error means the request was
+well-formed, the broadcaster ID resolved, the category name resolved to a
+`game_id` (the lookup runs before the PATCH), and the header was accepted. Only
+the grant is missing.
+**Not verified:** that a title or category actually changes. Blocked on the
+re-auth described in "The one live blocker, still live" above, which is one press
+of Reconnect. The channel was left untouched.
 
 ### 10. Stream category editing
+**BUILT, AWAITING A RE-AUTH** (2026-08-09)
 *a day*
 **Does:** Change the game or category.
 **How:** Same function, `{ gameName }`. It already does the `helix/games?name=`
 lookup to convert a name to a `game_id`, including the error path for an unknown
 category. Share one Submit button with item 9 so a title and category change go
 up together.
+**As built:** the Category field on the same card, sharing item 9's Update
+Channel button, so both go up as one request. Built and blocked identically to
+item 9; see its entry for the detail.
+**Rough edge worth naming:** the field takes a category *name* and there is no
+picker or autocomplete. A typo is rejected with a clear "could not find a
+game/category named X" rather than corrected. A searchable dropdown means a
+Helix category search plus new UI, which is more than this item asked for, but it
+is the obvious next improvement here.
 
 ---
 

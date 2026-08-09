@@ -7,6 +7,7 @@ const assert = require('assert');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { spawnSync } = require('child_process');
 
 // Point the config store at a scratch copy so this test never touches
 // the real config/ files.
@@ -126,6 +127,88 @@ function checkUpdateScriptIsReadOnly() {
     );
   }
   console.log('checkUpdate.js stays read-only: ok');
+}
+
+// The scopes the token is requested with. A scope going missing here does not
+// fail loudly: it surfaces later as a 401 from whichever Helix call needed it,
+// a long way from the cause, so it is worth pinning.
+function checkAuthScopes() {
+  const { SCOPES } = require('../src/twitchAuth');
+
+  const required = [
+    'chat:read',
+    'chat:edit',
+    'moderator:manage:banned_users',
+    'channel:manage:broadcast',
+    'moderator:read:followers',
+    'channel:read:subscriptions',
+    'moderator:read:chatters',
+    'channel:read:ads',
+    'channel:read:redemptions',
+    'bits:read',
+  ];
+  for (const scope of required) {
+    assert.ok(SCOPES.includes(scope), `SCOPES must include ${scope}`);
+  }
+
+  // Not an oversight, a decision: starting an ad break is irreversible and
+  // viewer-facing, and no code here runs ads yet. It gets added with item 35.
+  assert.ok(
+    !SCOPES.includes('channel:manage:ads'),
+    'channel:manage:ads should not be requested until the feature that runs ads exists'
+  );
+  console.log('requested OAuth scopes: ok');
+}
+
+// setChannelInfo.js is the panel's write path. An empty submission must stop
+// before the network, since "no fields filled in" is a mistake to name rather
+// than a request to send.
+function checkSetChannelInfoRejectsEmpty() {
+  const script = path.join(__dirname, '..', 'scripts', 'setChannelInfo.js');
+  const res = spawnSync(process.execPath, [script], {
+    encoding: 'utf8',
+    env: Object.assign({}, process.env, {
+      TWITCH_CHANNEL: 'someone',
+      CHANNEL_TITLE: '',
+      CHANNEL_CATEGORY: '   ',
+    }),
+  });
+
+  assert.notStrictEqual(res.status, 0, 'an empty submission should exit non-zero');
+  assert.ok(
+    /Nothing to change/.test(res.stderr),
+    `expected a "nothing to change" message, got: ${res.stderr.trim() || res.stdout.trim()}`
+  );
+  assert.ok(
+    !/CHANNEL_UPDATE_OK/.test(res.stdout),
+    'an empty submission must not report success'
+  );
+  console.log('setChannelInfo.js rejects an empty submission: ok');
+}
+
+// The credential guard on the write path. The suite does not load .env, so
+// these variables are genuinely absent here.
+async function checkUpdateChannelInfoNeedsCredentials() {
+  const twitchApi = require('../src/twitchApi');
+  const savedId = process.env.TWITCH_CLIENT_ID;
+  const savedToken = process.env.TWITCH_OAUTH_TOKEN;
+  delete process.env.TWITCH_CLIENT_ID;
+  delete process.env.TWITCH_OAUTH_TOKEN;
+
+  try {
+    await assert.rejects(
+      () => twitchApi.updateChannelInfo('someone', { title: 'x' }),
+      /Missing TWITCH_CLIENT_ID/
+    );
+    await assert.rejects(
+      () => twitchApi.getChannelSettings('someone'),
+      /Missing TWITCH_CLIENT_ID/
+    );
+    console.log('channel read/write refuse to run without credentials: ok');
+  } finally {
+    if (savedId !== undefined) process.env.TWITCH_CLIENT_ID = savedId;
+    if (savedToken !== undefined) process.env.TWITCH_OAUTH_TOKEN = savedToken;
+  }
 }
 
 async function run() {
@@ -281,6 +364,11 @@ async function run() {
 
   // --- Update check ---
   checkUpdateScriptIsReadOnly();
+
+  // --- Channel title and category ---
+  checkAuthScopes();
+  checkSetChannelInfoRejectsEmpty();
+  await checkUpdateChannelInfoNeedsCredentials();
 
   configStore.close();
   fs.rmSync(scratchDir, { recursive: true, force: true });
