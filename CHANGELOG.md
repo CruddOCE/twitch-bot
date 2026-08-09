@@ -6,8 +6,10 @@ Two features, both of them fixes for things that wasted real stream time: an
 overlay that could not recover itself when OBS started first, and a bug report
 that arrived with no picture of the bug.
 
-Nothing here has been used on a live stream yet. See **Still needs testing**
-at the bottom.
+Neither feature had been used on a live stream when this version shipped. Both
+were confirmed working on 2026-08-09, shortly after. See **Still needs testing**
+at the bottom for what is still outstanding, all of it carried over from
+0.5.16.
 
 ### Added
 
