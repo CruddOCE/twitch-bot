@@ -158,6 +158,22 @@ The **left rail** holds:
   are currently connected. The overlay count is polled from the running bot
   every 5 seconds, so plugging the Browser Source into OBS shows up here
   without having to fire a test alert to find out.
+- **STATS**: live viewers, people currently in chat, total followers and
+  active subscribers. These come from the running bot, so they are blank when
+  it is stopped, and viewers reads **offline** rather than `0` when the
+  channel is not live, since Twitch reports no viewer count at all then and a
+  zero would look like a measurement.
+
+  Chatters and viewers are different numbers and are meant to be: chatters
+  counts who is actually present in chat, which includes lurkers and your own
+  bot, and it keeps working while you are offline.
+
+  The bot asks Twitch once a minute and caches the answer, so the panel's
+  5 second poll costs nothing extra. If a lookup fails the row says what to do
+  about it: **reconnect** means the token needs re-authorising (see
+  [Setting the title and category](#setting-the-title-and-category) below), **rate
+  limited** and **unavailable** both mean wait. Repeated failures back off to
+  one attempt every ten minutes rather than retrying every minute.
 - **Start with Windows**: opens this panel automatically when you sign in.
   It opens the panel only, not the bot, so pressing Start Bot stays a
   deliberate choice rather than something that happens at every boot. The
@@ -313,6 +329,18 @@ sends one request. That path is also how to test a write without going through
 the panel, which matters because the panel's text fields cannot be driven by
 automation.
 
+The channel stats have the same escape hatch:
+
+```bash
+npm run channel-stats
+```
+
+It does one pass and prints all four numbers, unlike the panel which only ever
+shows the cached copy. That is the quickest way to tell a stale readout apart
+from a broken lookup, and to check a scope really came back after a Reconnect.
+Unlike `channel-read` this one does need scopes, so it is also a real test of
+the token: followers, subscribers and chatters each need their own.
+
 Add your own in `config/commands.json`:
 ```json
 {
@@ -453,6 +481,10 @@ touches your source code, config, or git history.
   rather than PowerShell (~3x faster per call, see `native/`).
 - `src/twitchAuth.js` / `src/twitchApi.js`: OAuth login flow and the Helix
   API client used by `!so`/`!title`/`!game`.
+- `src/channelStats.js`: polls Twitch once a minute for viewers, chatters,
+  followers and subscribers, caches them, and backs off when a lookup
+  fails. The alert server's `/status` serves that cache, which is what
+  keeps the panel's 5 second poll from turning into Helix traffic.
 - `scripts/`: setup wizard, token refresh, update, `checkUpdate.js` (the
   read-only "are we behind?" check), uninstall, the OBS WebSocket
   integration, and `connectAccount.js` (the non-interactive sign-in step

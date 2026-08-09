@@ -680,6 +680,10 @@ class MainForm : Form
     private Label channelValue;
     private Label portValue;
     private Label overlayValue;
+    private Label viewersValue;
+    private Label chattersValue;
+    private Label followersValue;
+    private Label subsValue;
 
     // Views
     private Panel dashboardPanel;
@@ -754,8 +758,12 @@ class MainForm : Form
         // the content column. Adding a rail control means checking this
         // again: below roughly 600px of client height the rail's bottom
         // group starts eating the readout from the top.
-        Height = 640;
-        MinimumSize = new Size(760, 630);
+        // Raised from 640/630 when the four Phase 3 stat rows went into the
+        // rail readout: 4 rows at 20px plus the STATS label is 100px more
+        // that the rail has to fit, and the readout is what gets eaten
+        // first when it does not.
+        Height = 740;
+        MinimumSize = new Size(760, 730);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Theme.Surface1;
         Font = Theme.Body;
@@ -939,10 +947,27 @@ class MainForm : Form
             BackColor = Theme.Surface0,
         };
 
-        var readout = new Panel { Width = inner, Height = 60, BackColor = Theme.Surface0, Margin = new Padding(10, 0, 0, 6) };
+        // Two groups in one block: the first three rows are this machine's
+        // state (what the bot is pointed at, and whether OBS is attached),
+        // the four below are the channel's. They are separated by the STATS
+        // label rather than split into two panels, because they update on
+        // the same 5s poll and read as one list.
+        var readout = new Panel { Width = inner, Height = 160, BackColor = Theme.Surface0, Margin = new Padding(10, 0, 0, 6) };
         readout.Controls.Add(ReadoutRow("Channel", 0, out channelValue, inner - 10));
         readout.Controls.Add(ReadoutRow("Alert port", 20, out portValue, inner - 10));
         readout.Controls.Add(ReadoutRow("Overlays", 40, out overlayValue, inner - 10));
+        readout.Controls.Add(new Label
+        {
+            Text = "STATS",
+            Font = Theme.Micro,
+            ForeColor = Theme.TextDim,
+            AutoSize = true,
+            Location = new Point(0, 66),
+        });
+        readout.Controls.Add(ReadoutRow("Viewers", 84, out viewersValue, inner - 10));
+        readout.Controls.Add(ReadoutRow("Chatters", 104, out chattersValue, inner - 10));
+        readout.Controls.Add(ReadoutRow("Followers", 124, out followersValue, inner - 10));
+        readout.Controls.Add(ReadoutRow("Subscribers", 144, out subsValue, inner - 10));
         portValue.Font = Theme.Mono;
 
         reportIssueButton = new KitButton("Report an Issue", BtnKind.Ghost, Theme.Surface0);
@@ -1914,6 +1939,11 @@ class MainForm : Form
         uptimePill.Visible = false;
         SetOverlayValue("none", false);
 
+        // The stats are polled by the bot process, so a stopped bot has no
+        // way to refresh them. Blank them rather than leaving last hour's
+        // viewer count sitting there looking current.
+        ClearStatValues();
+
         // The mute flag lives in the bot process, so stopping it clears
         // the mute. Follow that here rather than leaving a tick claiming
         // a mute that nothing is enforcing any more.
@@ -1952,6 +1982,11 @@ class MainForm : Form
             var muted = Regex.Match(body, "\"muted\"\\s*:\\s*(true|false)");
             if (muted.Success) muteAlertsBox.SetCheckedSilently(muted.Groups[1].Value == "true");
 
+            // The channel stats ride on this same response rather than
+            // getting their own poll. They are already cached bot-side, so
+            // reading them every 5s costs Twitch nothing.
+            ApplyStats(body);
+
             var m = Regex.Match(body, "\"connectedOverlays\"\\s*:\\s*(\\d+)");
             if (!m.Success) return;
             int count = int.Parse(m.Groups[1].Value);
@@ -1970,6 +2005,72 @@ class MainForm : Form
         if (overlayValue == null) return;
         overlayValue.Text = text;
         overlayValue.ForeColor = ok ? Theme.Ok : Theme.TextMuted;
+    }
+
+    // Reads the stats block off the /status response. Regex rather than a
+    // JSON parser to match how the rest of this poll already works, and
+    // because the field names are unique across the whole document, so
+    // there is nothing to disambiguate by nesting.
+    private void ApplyStats(string body)
+    {
+        bool live = Regex.IsMatch(body, "\"live\"\\s*:\\s*true");
+        string problem = StatError(ReadStatText(body, "error"));
+
+        // Offline is not zero. Helix has no viewer count for a channel that
+        // is not live, so showing 0 would invent a measurement.
+        string viewers = ReadStatText(body, "viewers");
+        if (viewers != null) SetStatValue(viewersValue, viewers, true);
+        else if (!live) SetStatValue(viewersValue, "offline", false);
+        else SetStatValue(viewersValue, problem, false);
+
+        ApplyStat(chattersValue, body, "chatters", problem);
+        ApplyStat(followersValue, body, "followers", problem);
+        ApplyStat(subsValue, body, "subscribers", problem);
+    }
+
+    private void ApplyStat(Label target, string body, string field, string problem)
+    {
+        string value = ReadStatText(body, field);
+        if (value != null) SetStatValue(target, value, true);
+        else SetStatValue(target, problem, false);
+    }
+
+    // Returns the number as text, or null when the field is absent or
+    // explicitly null -- which is how the bot says "no answer", as opposed
+    // to an answer of zero.
+    private string ReadStatText(string body, string field)
+    {
+        var m = Regex.Match(body, "\"" + field + "\"\\s*:\\s*(\\d+|\"[^\"]*\"|null)");
+        if (!m.Success) return null;
+        string raw = m.Groups[1].Value;
+        if (raw == "null") return null;
+        return raw.Trim('"');
+    }
+
+    // Each failure needs a different thing from the reader, so each gets
+    // its own word: a scope problem is fixed by Reconnect, the rest by
+    // waiting.
+    private string StatError(string kind)
+    {
+        if (kind == "auth") return "reconnect";
+        if (kind == "ratelimit") return "rate limited";
+        if (kind == "unavailable") return "unavailable";
+        return "-";
+    }
+
+    private void SetStatValue(Label target, string text, bool ok)
+    {
+        if (target == null) return;
+        target.Text = text;
+        target.ForeColor = ok ? Theme.Text : Theme.TextMuted;
+    }
+
+    private void ClearStatValues()
+    {
+        SetStatValue(viewersValue, "-", false);
+        SetStatValue(chattersValue, "-", false);
+        SetStatValue(followersValue, "-", false);
+        SetStatValue(subsValue, "-", false);
     }
 
     // ---------- OBS / Test Alert / Update ----------

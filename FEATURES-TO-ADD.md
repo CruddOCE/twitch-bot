@@ -426,29 +426,80 @@ Four readouts for the panel's left rail, beside the uptime badge. Build them as
 one shared polling layer with backoff and a sane failure display, not four
 independent timers.
 
+**BUILT 2026-08-09, all four.** They share one module, `src/channelStats.js`.
+
+**Where they went, since the instruction above could not be followed
+literally:** "the left rail, beside the uptime badge" names two different
+places, because `uptimePill` is added to the top bar, not the rail. They went in
+the rail, as four rows under a `STATS` label in the existing readout block,
+which is the right home semantically: it *is* the state readout, and splitting
+state between the rail and the top bar would be incoherent. Top bar pills were
+measured and rejected: the bar spans the window width minus the 232px rail, so
+at the 760px minimum there are about 184px left after Start Bot, the status dot,
+label and uptime pill, and four pills need roughly 280. It would have looked
+right at the default width and broken when the window was dragged narrow.
+
+**The architecture, which is the part worth keeping:** polling lives in node and
+is served on the alert server's existing `GET /status`, not in the panel. The
+panel already polls that endpoint every 5 seconds for the overlay count and the
+mute state, so four more numbers in the response cost no new machinery on the
+C# side. **The two cadences are deliberately decoupled by a cache**: the panel
+reads every 5 seconds, Twitch is asked once a minute. Wiring Helix directly into
+the `/status` handler would have turned one open control panel into roughly 17
+requests a minute per endpoint, which is the mistake this design exists to
+avoid. Failures double the wait up to a ten minute cap and snap back on the
+first success, so a revoked token costs a request every ten minutes rather than
+one a minute for as long as the bot is up.
+
+**Accepted trade-off:** the numbers only exist while the bot is running, since
+the alert server is the bot. The panel blanks them on stop rather than leaving
+the last known values sitting there looking current.
+
 ### 11. Viewer count
+**BUILT, AWAITING LIVE TESTING** (2026-08-09)
 *a few days*
 **Does:** Live concurrent viewers.
 **How:** Helix `Get Streams`. Public data, no new scope needed, so this is the one
 to build first and it carries the cost of the shared polling layer.
+**As built:** `fetchStream()` in `src/channelStats.js`. **Offline is not zero.**
+Helix returns an empty array for a channel that is not live, so there is no
+`viewer_count` to read at all, and rendering that as `0` would be a lie that
+looks like a measurement. The row reads `offline` instead.
+**Verified:** the call works and correctly reported the channel as offline. The
+viewer number itself is the one thing here that **cannot be checked without
+going live**, since it requires an actual audience.
 
 ### 12. Follower count
+**BUILT AND VERIFIED** (2026-08-09)
 *hours*
 **Does:** Total channel followers.
 **How:** Helix `Get Channel Followers`, scope `moderator:read:followers`. Slots
 into the polling layer from item 11.
+**As built:** `first=1` on the request, reading `total` off the response
+envelope rather than paging through the names to count them.
+**Verified:** returned 312 against the live channel.
 
 ### 13. Subscriber count
+**BUILT AND VERIFIED** (2026-08-09)
 *hours*
 **Does:** Total active subscribers.
 **How:** Helix `Get Broadcaster Subscriptions`, scope
 `channel:read:subscriptions`.
+**Verified:** returned 2 against the live channel.
 
 ### 14. Chatter count
+**BUILT AND VERIFIED** (2026-08-09)
 *hours*
 **Does:** People present in chat, as distinct from viewers. The two numbers
 diverge constantly, which is why both are worth showing.
 **How:** Helix `Get Chatters`, scope `moderator:read:chatters`.
+**The endpoint is `/helix/chat/chatters`, not `/helix/chatters`.** The wrong
+path returns a 404, which reads exactly like a missing scope and will send you
+back to re-auth a token that was fine. This cost a detour on the first run.
+**Answered while building:** chatters **does** work while the channel is
+offline, returning 3 with nothing live. It had been an open question, since
+item 11's endpoint goes quiet offline and it was reasonable to expect this one
+to as well.
 
 ---
 

@@ -88,6 +88,17 @@ async function checkMuteAlerts() {
     assert.strictEqual(status.muted, false, '/status should report the unmuted state');
     console.log('mute defaults to off: ok');
 
+    // The panel reads overlays, mute and all four stats out of this single
+    // response. A field quietly disappearing from it kills a readout without
+    // failing anything, so pin the whole shape rather than just mute.
+    assert.strictEqual(typeof status.connectedOverlays, 'number');
+    assert.strictEqual(status.port, port);
+    assert.ok(status.stats, '/status must carry the channel stats block');
+    for (const field of ['live', 'viewers', 'chatters', 'followers', 'subscribers']) {
+      assert.ok(field in status.stats, `/status stats must include ${field}`);
+    }
+    console.log('/status carries overlays, mute and the stats block: ok');
+
     let muted = await get('/mute-alerts?muted=1');
     assert.strictEqual(muted.muted, true);
     assert.strictEqual(alertServer.isMuted(), true);
@@ -108,6 +119,10 @@ async function checkMuteAlerts() {
 
     alertServer.setMuted(false);
   } finally {
+    // Starting the server starts the stat poll, so stop it here too. Its
+    // timer is unref'd and cannot hold the run open, but leaving it armed
+    // would let a later test see a refresh it did not ask for.
+    require('../src/channelStats').stop();
     await new Promise((resolve) => server.close(resolve));
   }
 }
@@ -127,6 +142,50 @@ function checkUpdateScriptIsReadOnly() {
     );
   }
   console.log('checkUpdate.js stays read-only: ok');
+}
+
+// The four channel stat readouts. The Helix calls themselves need network and
+// a live token, so what is covered here is the part that has actually been got
+// wrong before: reporting an absent number as zero, and hammering an endpoint
+// that is failing.
+function checkChannelStats() {
+  const channelStats = require('../src/channelStats');
+
+  // Offline is not zero. Twitch returns no viewer count for a channel that
+  // is not live, and rendering that as 0 would be a measurement nobody took.
+  const fresh = channelStats.getSnapshot();
+  for (const field of ['viewers', 'chatters', 'followers', 'subscribers']) {
+    assert.strictEqual(fresh[field], null, `${field} must start as null, never 0`);
+  }
+  assert.strictEqual(fresh.live, false);
+  console.log('channel stats start as null rather than zero: ok');
+
+  // The snapshot is handed out by value, so a caller cannot edit the cache.
+  fresh.followers = 999;
+  assert.strictEqual(channelStats.getSnapshot().followers, null, 'getSnapshot() must not expose the live cache');
+  console.log('channel stats snapshot is a copy: ok');
+
+  // No credentials means no timer, which is also what stops this very test
+  // run from making live Twitch calls when it starts the alert server below.
+  const saved = { channel: process.env.TWITCH_CHANNEL, token: process.env.TWITCH_OAUTH_TOKEN };
+  delete process.env.TWITCH_CHANNEL;
+  delete process.env.TWITCH_OAUTH_TOKEN;
+  assert.strictEqual(channelStats.start(), false, 'polling must not start without credentials');
+  channelStats.stop();
+  if (saved.channel !== undefined) process.env.TWITCH_CHANNEL = saved.channel;
+  if (saved.token !== undefined) process.env.TWITCH_OAUTH_TOKEN = saved.token;
+  console.log('channel stats decline to poll without credentials: ok');
+
+  // Backoff doubles and caps. Without this a revoked token costs a request a
+  // minute for as long as the bot is up.
+  const { REFRESH_MS, MAX_BACKOFF_MS } = channelStats;
+  let delay = REFRESH_MS;
+  delay = channelStats.nextDelayMs(delay, false);
+  assert.strictEqual(delay, REFRESH_MS * 2, 'first failure should double the wait');
+  for (let i = 0; i < 20; i++) delay = channelStats.nextDelayMs(delay, false);
+  assert.strictEqual(delay, MAX_BACKOFF_MS, 'backoff must cap rather than growing without bound');
+  assert.strictEqual(channelStats.nextDelayMs(delay, true), REFRESH_MS, 'success should return to the normal cadence');
+  console.log('channel stats back off on failure and recover on success: ok');
 }
 
 // The scopes the token is requested with. A scope going missing here does not
@@ -358,6 +417,9 @@ async function run() {
   result = moderation.evaluate({ username: 'modUser', text: 'this has a badword in it', isMod: true, isBroadcaster: false });
   assert.strictEqual(result, null);
   console.log('mods exempt from moderation: ok');
+
+  // --- Channel stats ---
+  checkChannelStats();
 
   // --- Mute alerts ---
   await checkMuteAlerts();

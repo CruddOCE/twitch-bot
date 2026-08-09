@@ -5,6 +5,7 @@ const WebSocket = require('ws');
 const logger = require('./logger');
 const configStore = require('./configStore');
 const ttsEngine = require('./ttsEngine');
+const channelStats = require('./channelStats');
 
 let wss = null;
 let server = null;
@@ -39,8 +40,19 @@ function start() {
   // its "Overlays" readout reflects reality continuously. Kept separate
   // because /test-alert has side effects (it fires an alert and speaks),
   // so it can't be used to answer "is anything connected right now?".
+  // The channel stats ride along here for the same reason mute does: the
+  // panel is already polling this every 5 seconds, so four more numbers in
+  // the response cost nothing, where a second endpoint would cost a second
+  // poll. They come out of channelStats' cache, never a live Helix call --
+  // see the header of that module for why that distinction matters.
   app.get('/status', (req, res) => {
-    res.json({ ok: true, connectedOverlays: getConnectedCount(), port: listeningPort, muted: alertsMuted });
+    res.json({
+      ok: true,
+      connectedOverlays: getConnectedCount(),
+      port: listeningPort,
+      muted: alertsMuted,
+      stats: channelStats.getSnapshot(),
+    });
   });
 
   // Mute rides on /status above rather than getting its own poll, so the
@@ -104,6 +116,11 @@ function start() {
     });
   }, 20000);
   heartbeat.unref();
+
+  // Tied to the server's lifetime rather than started from index.js, so
+  // /status can never serve a snapshot from a module nobody started. It
+  // returns immediately when there are no credentials yet.
+  channelStats.start();
 
   server.listen(port, () => {
     console.log(`[alerts] Overlay running at http://localhost:${port}/overlay.html (add this as an OBS Browser Source)`);
