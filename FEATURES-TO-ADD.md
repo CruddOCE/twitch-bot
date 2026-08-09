@@ -66,15 +66,15 @@ rather than forcing a fresh sign-in per item. See item 9.
 
 No dependencies, no new subsystems. All of these can land in a single session.
 
-**All eight are built as of 2026-08-03.** Item 2 is tested. Items 3 to 8 were
-built in one pass and carry their own verification notes; what is left
-unconfirmed in each case is either a custom tick that synthetic clicks cannot
-drive, or chat rendering that needs live chat to see.
+**All eight are built as of 2026-08-03.** Items 1, 2 and 3 are tested and DONE.
+Items 4 to 8 were built in one pass and carry their own verification notes; what
+is left unconfirmed in each case is either a custom tick that synthetic clicks
+cannot drive, or chat rendering that needs live chat to see.
 
-Items 1 and 3 were both extended in 0.6.0 and both have an untested path as a
-result: item 1 gained OBS-side recovery for an overlay that never loaded, and
-item 3 gained screenshot collection on a bug report. Neither has been used on a
-live stream. Item 1 is therefore no longer a flat DONE.
+Items 1 and 3 were both extended in 0.6.0, item 1 with OBS-side recovery for an
+overlay that never loaded and item 3 with screenshot collection on a bug report.
+Both of those paths were used for real on 2026-08-09 and behaved correctly, so
+both items are back to a clean DONE.
 
 One thing worth knowing before adding another rail control: the rail is a fixed
 stack that cannot reflow, and it now sets the window's minimum height. Adding to
@@ -82,9 +82,8 @@ it without raising `Height`/`MinimumSize` in `MainForm` silently eats the
 readout rows from the top, which is exactly what happened during this pass.
 
 ### 1. Reload Overlays
-**DONE, WITH A NEW PATH AWAITING TESTING** (built 2026-08-01, tested
-2026-08-03; recovery path added 2026-08-04, shipped in 0.6.0, not yet used on
-a live stream)
+**DONE** (built 2026-08-01, tested 2026-08-03; recovery path added 2026-08-04,
+shipped in 0.6.0, tested 2026-08-09)
 *hours*
 **Does:** Force-refreshes the OBS browser source without touching OBS. The
 standard fix for an overlay that has gone stale or stopped rendering.
@@ -126,10 +125,14 @@ and confirmed to still report `connectedOverlays:0`; running
 scene returned to its original 8 browser sources. `addObsSource.js` was re-run
 under a throwaway `OBS_SOURCE_NAME` to prove the module extraction did not
 break it.
-**Not verified:** an ordinary session where OBS opens first and the button is
-pressed for real, rather than the fault being staged.
+**Confirmed 2026-08-09:** the recovery path was used for real, not staged, and
+behaved as intended. Both halves of this item are now proven: the broadcast
+refresh against a connected overlay, and the OBS-side refresh against one that
+never loaded.
 **Still open:** `restart_when_active` is not set on the source, so a scene
-switch will not recover it either. Deliberately out of scope for that pass.
+switch will not recover it either. Deliberately out of scope for that pass, and
+still worth doing, since it would make the recovery automatic rather than a
+button someone has to remember to press.
 
 ### 2. Load on startup
 **DONE** (built 2026-08-01, tested 2026-08-03)
@@ -153,8 +156,8 @@ reach (a synthetic `WM_LBUTTONDOWN` does not drive a custom control the way
 `BM_CLICK` drives a real Button).
 
 ### 3. Report an issue
-**BUILT, AWAITING TESTING** (2026-08-03; extended with screenshots 2026-08-04,
-shipped in 0.6.0)
+**DONE** (built 2026-08-03; extended with screenshots 2026-08-04, shipped in
+0.6.0, tested 2026-08-09)
 *hours*
 **Does:** Opens a route to file a bug or request.
 **How:** `src/openBrowser.js` already exists. Point it at the GitHub issues page.
@@ -185,8 +188,10 @@ style; and the full path ran end to end on a real screenshot, logging the
 clipboard copy and opening the tracker. `FileDrop`, `FileNameW`, `FileName`,
 `System.Drawing.Bitmap` and `Bitmap` were all confirmed present on the
 clipboard afterwards.
-**Not verified:** that the paste itself lands in GitHub's editor. That needs a
-signed-in browser and a real issue draft.
+**Confirmed 2026-08-09:** the paste lands in GitHub's editor. This was the one
+step that could not be proven without a signed-in browser and a real issue
+draft, and it works, so carrying both a `Bitmap` and a `FileDropList` on the
+clipboard did its job. The whole item is now end to end.
 
 ### 4. Mute Alerts
 **BUILT, AWAITING TESTING** (2026-08-03)

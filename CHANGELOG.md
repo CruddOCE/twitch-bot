@@ -72,18 +72,24 @@ Everything carried over from 0.5.16 is still outstanding:
 - Chat timestamps and mod-mention highlighting, which need live chat with a
   moderator present to see.
 
-New in this release:
+New in this release, both since confirmed:
 
-- **The cold start that motivated the whole feature.** Recovery was proved by
+- ~~**The cold start that motivated the whole feature.** Recovery was proved by
   reproducing the fault deliberately: a browser source was pointed at a port
   with nothing listening, which produced the identical error page, and the
   refresh took the connected count from 0 to 1. What has not happened yet is
   an ordinary session where OBS opens first and the button is pressed for
-  real.
-- **Whether the screenshot actually pastes into GitHub's editor.** The dialog
+  real.~~
+- ~~**Whether the screenshot actually pastes into GitHub's editor.** The dialog
   runs end to end and the clipboard is confirmed to carry both the image and
   the file path afterwards, but proving the paste needs a signed-in browser
-  and a real issue draft.
+  and a real issue draft.~~
+
+**Confirmed after release, 2026-08-09.** Both of the above were used for real
+and behaved as intended: the overlay recovered on an actual cold start, and the
+screenshot pasted into GitHub's editor. They are struck through rather than
+deleted, because these notes are the record of what was proven at the time the
+version shipped, and at that point neither was.
 
 ### Known gap
 

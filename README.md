@@ -23,10 +23,11 @@ the build-ordered backlog these features come from, adding Mute Alerts, Report
 an Issue, an update check on launch, and three chat display controls
 (timestamps, mod-mention highlighting, font size).
 
-The earlier untested items from 0.5.15 have since been confirmed working:
-spoken alerts inside OBS, cooldowns and timers against live chat, the control
-panel's running state, the Reconnect button, Reload Overlays against a
-connected overlay, and Start with Windows.
+Confirmed working, having previously been untested: spoken alerts inside OBS,
+cooldowns and timers against live chat, the control panel's running state, the
+Reconnect button, Start with Windows, and both halves of Reload Overlays, the
+broadcast refresh and the OBS-side recovery of an overlay that never loaded.
+Report an Issue is confirmed end to end, screenshot paste included.
 
 These are what remain known-unverified rather than known-to-work:
 
@@ -36,14 +37,6 @@ These are what remain known-unverified rather than known-to-work:
   is covered by the test suite; the ticks themselves have not been clicked.
 - **Chat timestamps and mod-mention highlighting.** Both need live chat with
   a moderator present before the rendering can be seen.
-- **Overlay recovery on a real cold start.** It was proved by reproducing the
-  fault on purpose (a browser source pointed at a dead port, then refreshed,
-  taking the connected count from 0 to 1), but not yet by an ordinary session
-  where OBS happens to open before the bot.
-- **The screenshot pasting into GitHub.** Report an Issue has been driven end
-  to end, and the clipboard is confirmed to carry both the image and the file
-  path afterwards, but whether the paste lands in GitHub's editor needs a
-  signed-in browser and a real issue draft to prove.
 
 A scene switch will not recover a dead overlay either, since
 `restart_when_active` is not set on the browser source. Reload Overlays is the
