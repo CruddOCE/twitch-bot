@@ -12,10 +12,9 @@ not been tested on a real stream yet.** It works, and the offline test suite
 passes, but "passes its tests" and "proven live in front of viewers" are not
 the same thing. Treat it accordingly if you run it on your own channel.
 
-**In progress since 0.6.0:** a Channel card on the dashboard for editing the
+**Unreleased since 0.6.0:** a Channel card on the dashboard for editing the
 stream title and category, described under **Setting the title and category**
-below. Built and reading correctly, but writing needs a token re-auth that has
-not happened on this install yet.
+below. Built and confirmed working against a live channel.
 
 **0.6.0 adds overlay recovery through OBS and screenshots on bug reports.**
 Reload Overlays can now rescue an overlay that never loaded at all, which is
@@ -42,10 +41,9 @@ These are what remain known-unverified rather than known-to-work:
   is covered by the test suite; the ticks themselves have not been clicked.
 - **Chat timestamps and mod-mention highlighting.** Both need live chat with
   a moderator present before the rendering can be seen.
-- **Changing the title or category**, whether from the Channel card or with
-  `!title` and `!game`. All three need a token carrying
-  `channel:manage:broadcast`, and the flow that grants it has not been completed
-  on this install: see **Setting the title and category** below.
+- **`!title` and `!game` typed in chat.** The API call behind them is the same
+  one the Channel card uses, which is confirmed working, so what is untested is
+  only the chat trigger itself.
 
 A scene switch will not recover a dead overlay either, since
 `restart_when_active` is not set on the browser source. Reload Overlays is the
@@ -282,11 +280,18 @@ autocomplete yet.
 
 Both fields, and `!title`/`!game`, need a token carrying
 `channel:manage:broadcast`. Without it Twitch answers with a 401 naming the
-missing scope and nothing changes. If you set the bot up before that scope
-existed, press **Reconnect** on Setup step 3, which signs in again and merges
-the new token into your `.env` without disturbing anything else in it. One
-Reconnect also picks up the read scopes the upcoming channel-stats readouts
-need, so this is a single sign-in rather than one per feature.
+missing scope and nothing changes, which is the single most likely reason for
+this not working. If you set the bot up before that scope existed, press
+**Reconnect** on Setup step 3, which signs in again and merges the new token into
+your `.env` without disturbing anything else in it. One Reconnect also picks up
+the read scopes the upcoming channel-stats readouts need, so this is a single
+sign-in rather than one per feature.
+
+To see what your token actually carries, rather than what it ought to:
+
+```bash
+node -e "require('dotenv').config();const t=process.env.TWITCH_OAUTH_TOKEN.replace(/^oauth:/,'');fetch('https://id.twitch.tv/oauth2/validate',{headers:{Authorization:'OAuth '+t}}).then(r=>r.json()).then(d=>console.log(d.scopes))"
+```
 
 To read the live values from a terminal:
 

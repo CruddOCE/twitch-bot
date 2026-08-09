@@ -47,30 +47,29 @@ Effort estimates are against this repo at v0.5.1, not against a blank page.
 | Structured logging | `src/logger.js` |
 | Self-update with a detached watcher | `scripts/update.js`, Update button |
 
-### The one live blocker, still live
+### The one live blocker, cleared for real on 2026-08-09
 
-**The token in `.env` does not carry `channel:manage:broadcast`.** Validated
-against `https://id.twitch.tv/oauth2/validate` on 2026-08-09, it holds exactly
-three scopes: `chat:read`, `chat:edit`, `moderator:manage:banned_users`. That is
-the scope list from *before* `channel:manage:broadcast` was added to
-`src/twitchAuth.js`, so the token predates the addition and the re-auth that
-would have picked it up never completed.
+**Cleared, and this time with evidence.** The user pressed Reconnect on Setup
+step 3 and the token was re-validated against
+`https://id.twitch.tv/oauth2/validate`. It now carries all ten scopes, including
+`channel:manage:broadcast`, and expires in 58 days. A real title and category
+change was then written and read back, from both the command line and the panel's
+own Update Channel button.
 
-This corrects an earlier claim in this file and in `HANDOFF.md` that the
-blocker was cleared on 2026-08-03 and that `!title` and `!game` were confirmed
-working. They were not, and cannot have been: Twitch answers the write with a
-401 naming the missing scope. `!title` and `!game` have never worked on this
-install.
+`channel:manage:ads` is correctly **absent**, confirmed by the same validation.
 
-**Clearing it takes one press.** Setup step 3, Reconnect. It runs
-`scripts/connectAccount.js`, which merges the new token into `.env` rather than
-overwriting it, and reads `SCOPES` at the time it runs, so a single sign-in now
-grants all ten scopes including the six read scopes for items 11 to 14. That is
-the batching this section used to recommend planning for, and it now happens by
-itself on the next Reconnect.
+**The history here is worth keeping, because this section twice claimed to be
+cleared when it was not.** The original token held only `chat:read`, `chat:edit`
+and `moderator:manage:banned_users`, the scope list from before
+`channel:manage:broadcast` existed, so `!title` and `!game` had never worked on
+this install despite `HANDOFF.md` recording them as confirmed on 2026-08-03. The
+lesson: a scope question is settled by validating the token, not by reading these
+notes.
 
-Everything else about items 9 and 10 works. The reads are confirmed against the
-live API, and the write is confirmed correct up to authorisation.
+**The re-auth also did the Phase 3 groundwork.** `scripts/connectAccount.js`
+reads `SCOPES` when it runs and merges into `.env` rather than overwriting, so
+that single sign-in granted the six read scopes items 11 to 14 need. Phase 3
+needs no further authorisation work.
 
 ---
 
@@ -313,13 +312,13 @@ test asserts the script never references a mutating git verb.
 The best value per line of new code in the document, because the API call is
 already written.
 
-**Both items are built as of 2026-08-09.** The reads work against the live API;
-the writes are correct but unauthorised until the token is re-authed, which is
-one press of Reconnect on Setup step 3. See "The one live blocker, still live"
-near the top of this file: it turned out never to have been cleared.
+**Both items are built and tested as of 2026-08-09.** Reads and writes are
+confirmed against the live channel, from the command line and from the panel's
+own button, with the title and category restored to their original values
+afterwards.
 
 ### 9. Stream title editing
-**BUILT, AWAITING A RE-AUTH** (2026-08-09)
+**DONE** (built and tested 2026-08-09)
 *a day*
 **Does:** Change the live title from the control panel, without opening the Twitch
 dashboard.
@@ -378,19 +377,31 @@ no client secret configured. The fields arrive prefilled in the real window,
 screenshotted. Three offline tests: the scope list, the empty-submission guard,
 and the missing-credentials guard.
 
-**Verified as far as authorisation, on the write path.** A real submission was
-attempted on 2026-08-09 and Twitch answered `401 Missing scope:
-user:edit:broadcast or channel:manage:broadcast or channel_editor`. That is a
-better result than it sounds: reaching a scope error means the request was
-well-formed, the broadcaster ID resolved, the category name resolved to a
-`game_id` (the lookup runs before the PATCH), and the header was accepted. Only
-the grant is missing.
-**Not verified:** that a title or category actually changes. Blocked on the
-re-auth described in "The one live blocker, still live" above, which is one press
-of Reconnect. The channel was left untouched.
+**The write path is verified against the live channel**, after the Reconnect
+that finally granted `channel:manage:broadcast`:
+- Title and category both written and confirmed by reading them back, then
+  restored to their original values and confirmed byte-identical with a
+  case-sensitive comparison.
+- The category was changed to something genuinely different (`Star Citizen`, from
+  `Escape from Tarkov`) rather than resubmitted unchanged, so the
+  `helix/games?name=` lookup and `game_id` resolution were exercised for real
+  rather than as a no-op.
+- The error path was exercised with a nonsense category name: it fails with
+  `Could not find a game/category named "..."`, exits non-zero, and writes
+  nothing, because the lookup runs before the PATCH.
+- **Driven from the panel's own button**, not just the command line, by finding
+  the Update Channel control with `EnumChildWindows` and sending `BM_CLICK`. The
+  activity log showed the script running and `CHANNEL_UPDATE_OK=1` at exit code
+  0. Worth noting the buttons respond to synthetic clicks where the custom
+  `KitCheck` ticks do not, since `KitButton` really is a `Button`.
+
+**Still not verified:** `!title` and `!game` from chat. They call the same
+`updateChannelInfo()` with the same token, so the API half is proven by
+construction, but nobody has typed the commands in chat since the scope was
+granted. Sending a message as the broadcaster is not something to automate.
 
 ### 10. Stream category editing
-**BUILT, AWAITING A RE-AUTH** (2026-08-09)
+**DONE** (built and tested 2026-08-09)
 *a day*
 **Does:** Change the game or category.
 **How:** Same function, `{ gameName }`. It already does the `helix/games?name=`
@@ -398,8 +409,9 @@ lookup to convert a name to a `game_id`, including the error path for an unknown
 category. Share one Submit button with item 9 so a title and category change go
 up together.
 **As built:** the Category field on the same card, sharing item 9's Update
-Channel button, so both go up as one request. Built and blocked identically to
-item 9; see its entry for the detail.
+Channel button, so both go up as one request. Built and verified alongside item
+9; see its entry for the detail, including the real category change and the
+unknown-category error path.
 **Rough edge worth naming:** the field takes a category *name* and there is no
 picker or autocomplete. A typo is rejected with a clear "could not find a
 game/category named X" rather than corrected. A searchable dropdown means a
