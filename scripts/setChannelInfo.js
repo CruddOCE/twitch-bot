@@ -21,7 +21,7 @@
 // channel's own token change its info, and the token needs
 // channel:manage:broadcast.
 
-require('dotenv').config();
+require('dotenv').config({ path: require('../src/paths').envPath });
 const twitchApi = require('../src/twitchApi');
 
 async function main() {

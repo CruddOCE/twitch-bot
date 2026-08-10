@@ -4,16 +4,16 @@
 // to redo a step or refresh an expired login.
 
 const fs = require('fs');
-const path = require('path');
 const readline = require('node:readline/promises');
 const { stdin, stdout } = require('node:process');
 const { spawnSync } = require('child_process');
 
 const { openUrl } = require('../src/openBrowser');
+const paths = require('../src/paths');
 const twitchAuth = require('../src/twitchAuth');
 
-const ROOT = path.join(__dirname, '..');
-const ENV_PATH = path.join(ROOT, '.env');
+const ROOT = paths.installRoot;
+const ENV_PATH = paths.envPath;
 
 const rl = readline.createInterface({ input: stdin, output: stdout });
 
@@ -35,6 +35,7 @@ function link(url) {
 }
 
 function writeEnvFile(env) {
+  paths.ensureDataDir();
   const lines = Object.entries(env)
     .filter(([, v]) => v !== undefined && v !== '')
     .map(([k, v]) => `${k}=${v}`);
@@ -61,17 +62,24 @@ async function main() {
     }
   }
 
-  console.log('\nInstalling dependencies (npm install)...');
-  // Passing a single command string (not an args array) with shell:true
-  // avoids Node's DEP0190 warning, which only fires for the array-args
-  // form since that requires Node to join arguments into a shell command
-  // internally. shell:true itself is still needed here so Windows
-  // resolves npm.cmd correctly.
-  const install = spawnSync('npm install', { stdio: 'inherit', shell: true, cwd: ROOT });
-  if (install.status !== 0) {
-    console.error('\nnpm install failed. Fix that first, then re-run: npm run setup');
-    rl.close();
-    process.exit(1);
+  // An installed copy ships node_modules inside the program folder, so
+  // there is nothing to fetch and npm may not even be present. Only a
+  // checkout needs this step.
+  if (paths.isInstalled) {
+    console.log('\nDependencies are bundled with this install, skipping npm install.');
+  } else {
+    console.log('\nInstalling dependencies (npm install)...');
+    // Passing a single command string (not an args array) with shell:true
+    // avoids Node's DEP0190 warning, which only fires for the array-args
+    // form since that requires Node to join arguments into a shell command
+    // internally. shell:true itself is still needed here so Windows
+    // resolves npm.cmd correctly.
+    const install = spawnSync('npm install', { stdio: 'inherit', shell: true, cwd: ROOT });
+    if (install.status !== 0) {
+      console.error('\nnpm install failed. Fix that first, then re-run: npm run setup');
+      rl.close();
+      process.exit(1);
+    }
   }
 
   const env = {

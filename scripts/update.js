@@ -1,8 +1,19 @@
-// Updates this install to the latest version pushed to GitHub. Stashes
-// any local edits first (e.g. your customized config/*.json), pulls,
-// then reapplies those edits -- your customizations are preserved, or on
-// a genuine conflict, left for you to resolve rather than silently lost.
-// Then reinstalls dependencies in case package.json changed.
+// Updates this install to the latest version published on GitHub.
+//
+// Two ways in, matching scripts/checkUpdate.js:
+//
+// A git checkout stashes any local edits first (e.g. your customized
+// config/*.json), pulls, then reapplies those edits -- your customizations
+// are preserved, or on a genuine conflict, left for you to resolve rather
+// than silently lost. Then reinstalls dependencies in case package.json
+// changed.
+//
+// An installed copy has no .git, so instead it downloads the latest
+// release's installer and stops there, leaving it at a fixed path for the
+// control panel to run once this process (and the panel itself) have
+// exited. It deliberately does not launch the installer: this script runs
+// under the bundled runtime\node.exe, and Windows will not let the
+// installer overwrite that exe while it is still running.
 //
 // Usage: node scripts/update.js
 
@@ -10,8 +21,10 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync, execSync } = require('child_process');
 const logger = require('../src/logger');
+const paths = require('../src/paths');
+const release = require('../src/release');
 
-const ROOT = path.join(__dirname, '..');
+const ROOT = paths.installRoot;
 
 function resolveExe(candidates, fallback) {
   for (const c of candidates) {
@@ -33,7 +46,44 @@ function run(cmd, args) {
   return execFileSync(cmd, args, { cwd: ROOT, encoding: 'utf8' });
 }
 
-function main() {
+async function updateFromRelease() {
+  console.log('Checking GitHub for a newer release...');
+  let latest;
+  try {
+    latest = await release.fetchLatest();
+  } catch (err) {
+    console.error(`FAILED to check for releases: ${err.message}`);
+    logger.action('update', `Release check failed: ${err.message}`, false);
+    process.exitCode = 1;
+    return;
+  }
+
+  if (!latest.isNewer) {
+    console.log(`Already up to date (version ${release.currentVersion()}).`);
+    logger.action('update', 'Already up to date');
+    return;
+  }
+  if (!latest.assetUrl) {
+    console.error(`Release ${latest.tag} has no installer attached. Download it manually: ${release.RELEASES_PAGE}`);
+    logger.action('update', `Release ${latest.tag} has no installer asset`, false);
+    process.exitCode = 1;
+    return;
+  }
+
+  console.log(`Downloading version ${latest.version}...`);
+  try {
+    const file = await release.downloadInstaller(latest.assetUrl);
+    console.log(`Downloaded to ${file}`);
+    console.log('SUCCESS: the installer will now run and reopen the app.');
+    logger.action('update', `Downloaded installer for ${latest.tag}`);
+  } catch (err) {
+    console.error(`FAILED to download the update: ${err.message}`);
+    logger.action('update', `Installer download failed: ${err.message}`, false);
+    process.exitCode = 1;
+  }
+}
+
+function updateGitCheckout() {
   const git = resolveGit();
 
   console.log('Checking for local changes...');
@@ -111,4 +161,13 @@ function main() {
   logger.action('update', 'Update completed successfully');
 }
 
-main();
+function main() {
+  if (paths.isInstalled) return updateFromRelease();
+  updateGitCheckout();
+  return Promise.resolve();
+}
+
+main().catch((err) => {
+  console.error(`FAILED: ${err.message}`);
+  process.exitCode = 1;
+});

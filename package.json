@@ -1,11 +1,12 @@
 {
   "name": "twitch-bot",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "description": "Local Twitch live chat bot with custom commands and auto-moderation",
   "main": "index.js",
   "scripts": {
     "setup": "node scripts/setup.js",
+    "build-installer": "node scripts/build-installer.js",
     "uninstall": "node scripts/uninstall.js",
     "update": "node scripts/update.js",
     "obs-source": "node scripts/addObsSource.js",

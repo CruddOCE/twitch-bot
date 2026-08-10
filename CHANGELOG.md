@@ -1,5 +1,66 @@
 # Changelog
 
+## 0.7.0 (2026-08-09)
+
+A packaging release. Installing the bot used to mean downloading the repo,
+installing Node.js, and letting the control panel run `npm install` before
+anything worked. It is now a single setup exe that needs nothing already on
+the machine.
+
+Nothing about how the bot behaves on stream changed in this version.
+
+### Added
+
+- **A real Windows installer**, `twitch-bot-setup-<version>.exe`. Installs to
+  `C:\Program Files\twitch-bot`, adds Start Menu and optional Desktop
+  shortcuts, and registers in Settings > Apps with a working uninstaller.
+  Reinstalling upgrades in place rather than leaving two entries behind.
+- **A bundled Node.js runtime.** The pack carries its own `node.exe` and all
+  production dependencies, so there is nothing to install first, nothing to
+  compile, and no internet needed during setup. The bot always runs on the
+  Node version it shipped with rather than whatever happens to be on PATH.
+- **`npm run build-installer`**, which builds the pack. It stages a clean
+  copy in a temp folder from an explicit allowlist, so a real `.env`, the log
+  file or the `versions/` archive cannot end up in a public installer, and it
+  refuses to build if a `.env` or `.git` reaches the payload.
+- **Update by installer.** On an installed copy, the Update button now asks
+  the GitHub Releases API for the newest version, downloads its installer and
+  runs it. A git checkout still pulls, exactly as before.
+- Tests covering the split: where each writable path resolves, that config
+  seeding never overwrites a user's own file, that the TTS mount still serves
+  audio, release version comparison, and that the version in `package.json`
+  matches the one the panel displays.
+
+### Changed
+
+- **First-run setup is one step instead of three** on an installed copy.
+  Node.js and Install Dependencies are both already satisfied by the pack, so
+  only Connect your Twitch account is left. A git checkout still shows all
+  three, because a checkout genuinely needs them.
+- **Your settings moved to `%APPDATA%\twitch-bot`** for installed copies:
+  `.env`, `config\*.json`, `logs\bot.log` and generated TTS audio. Program
+  Files is not writable by the account running the app, so leaving them in
+  the program folder would have failed on the first save. An existing `.env`
+  is migrated across automatically on first run. A git checkout is unchanged
+  and keeps all of them in the project folder.
+- **Shipped config files are now templates.** They seed your config the first
+  time the bot runs and are never written over afterwards, so an update
+  cannot reset custom commands.
+- The uninstaller asks once whether to delete your settings and Twitch login,
+  and defaults to keeping them.
+
+### Removed
+
+- `install-twitch-bot.exe` from the project root, along with its source. It
+  existed only to give a fresh download one obvious thing to double-click,
+  which is what the installer and its Start Menu shortcut now do properly.
+
+### Known limitation
+
+- The installer is not code-signed, so Windows SmartScreen shows "Windows
+  protected your PC" on first run and users have to click More info, then Run
+  anyway. Fixing this needs a paid code-signing certificate.
+
 ## 0.6.0 (2026-08-09)
 
 Two features, both of them fixes for things that wasted real stream time: an

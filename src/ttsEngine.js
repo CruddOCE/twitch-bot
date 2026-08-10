@@ -18,8 +18,11 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const TTS_DIR = path.join(__dirname, '..', 'public', 'tts');
-const HELPER_PATH = path.join(__dirname, '..', 'bin', 'tts-helper.exe');
+const paths = require('./paths');
+
+const TTS_DIR = paths.ttsDir;
+// Stays in the program folder: the helper is shipped, never written to.
+const HELPER_PATH = path.join(paths.installRoot, 'bin', 'tts-helper.exe');
 const FILE_LIFETIME_MS = 30000;
 
 let cachedVoices = null;

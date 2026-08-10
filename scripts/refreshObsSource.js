@@ -12,7 +12,7 @@
 // Matches on the URL rather than the source name, so renamed sources and
 // copies sitting in several scenes all get refreshed.
 
-require('dotenv').config();
+require('dotenv').config({ path: require('../src/paths').envPath });
 const { connectAuthenticated, sendRequest } = require('../src/obsWebSocket');
 const logger = require('../src/logger');
 

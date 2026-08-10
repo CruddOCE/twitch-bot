@@ -7,7 +7,7 @@
 //
 // Prefer a fully guided setup? Run: npm run setup
 
-require('dotenv').config();
+require('dotenv').config({ path: require('../src/paths').envPath });
 const { getChatToken, DEFAULT_CLIENT_ID } = require('../src/twitchAuth');
 
 const clientId = process.env.TWITCH_CLIENT_ID;

@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const path = require('path');
 const WebSocket = require('ws');
+const paths = require('./paths');
 const logger = require('./logger');
 const configStore = require('./configStore');
 const ttsEngine = require('./ttsEngine');
@@ -23,7 +24,12 @@ function start() {
   listeningPort = port;
 
   const app = express();
-  app.use(express.static(path.join(__dirname, '..', 'public')));
+  app.use(express.static(path.join(paths.installRoot, 'public')));
+  // Generated TTS is written to the user's data dir, not into the shipped
+  // public/ folder, so it needs its own mount to keep answering the
+  // /tts/<id>.wav URLs ttsEngine hands to the overlay. Without this every
+  // alert renders silently with a 404 on its audio.
+  app.use('/tts', express.static(paths.ttsDir));
 
   // Lets you trigger a real alert + TTS on demand, so you can confirm the
   // OBS Browser Source is actually connected and its audio is routed

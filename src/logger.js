@@ -4,8 +4,9 @@
 
 const fs = require('fs');
 const path = require('path');
+const paths = require('./paths');
 
-const LOG_PATH = path.join(__dirname, '..', 'logs', 'bot.log');
+const LOG_PATH = path.join(paths.logsDir, 'bot.log');
 
 let logDirEnsured = false;
 

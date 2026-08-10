@@ -127,6 +127,192 @@ async function checkMuteAlerts() {
   }
 }
 
+// The installed app lives in Program Files, which it cannot write to, so
+// everything it saves has to resolve somewhere else. This suite runs from
+// a git checkout, where the answer must still be the project folder: get
+// that wrong and development starts silently reading a different .env from
+// the one on screen.
+function checkPathsInCheckout() {
+  const paths = require('../src/paths');
+  const root = path.join(__dirname, '..');
+  assert.strictEqual(paths.isInstalled, false, 'a checkout with .git must not be treated as an install');
+  assert.strictEqual(path.resolve(paths.dataDir), path.resolve(root));
+  assert.strictEqual(path.resolve(paths.envPath), path.resolve(root, '.env'));
+  assert.strictEqual(path.resolve(paths.configDir), path.resolve(root, 'config'));
+  assert.strictEqual(path.resolve(paths.logsDir), path.resolve(root, 'logs'));
+  assert.strictEqual(path.resolve(paths.ttsDir), path.resolve(root, 'public', 'tts'));
+  console.log('paths resolve to the project folder in a checkout: ok');
+}
+
+// The installed case, exercised through the data dir override so it can be
+// tested without a second copy of the tree. What matters is that all four
+// writable locations move together: one left behind in Program Files is an
+// access-denied crash on a machine that is not this one.
+function checkPathsWhenRelocated() {
+  const relocated = fs.mkdtempSync(path.join(os.tmpdir(), 'twitch-bot-data-'));
+  const res = spawnSync(
+    process.execPath,
+    ['-e', 'const p = require("./src/paths"); console.log(JSON.stringify(p));'],
+    {
+      cwd: path.join(__dirname, '..'),
+      encoding: 'utf8',
+      env: Object.assign({}, process.env, { TWITCH_BOT_DATA_DIR: relocated }),
+    }
+  );
+  assert.strictEqual(res.status, 0, `paths.js failed to load: ${res.stderr}`);
+  const p = JSON.parse(res.stdout);
+
+  for (const key of ['envPath', 'configDir', 'logsDir', 'ttsDir']) {
+    assert.ok(
+      path.resolve(p[key]).startsWith(path.resolve(relocated)),
+      `${key} (${p[key]}) must sit under the data dir, not the program folder`
+    );
+  }
+  fs.rmSync(relocated, { recursive: true, force: true });
+  console.log('every writable path follows the data dir: ok');
+}
+
+// A fresh install has an empty data dir, so the config it ships has to be
+// copied across on first run. The half that matters more is the second
+// assertion: an upgrade must never overwrite commands the user has written.
+function checkConfigSeeding() {
+  const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'twitch-bot-seed-'));
+  const configPath = path.join(seedDir, 'config');
+  const seed = () => spawnSync(
+    process.execPath,
+    ['-e', 'require("./src/configStore").seedDefaults();'],
+    {
+      cwd: path.join(__dirname, '..'),
+      encoding: 'utf8',
+      env: Object.assign({}, process.env, { TWITCH_BOT_CONFIG_DIR: configPath }),
+    }
+  );
+
+  let res = seed();
+  assert.strictEqual(res.status, 0, `seedDefaults failed: ${res.stderr}`);
+  for (const file of ['commands.json', 'moderation.json', 'jokes.json', 'alerts.json', 'cooldowns.json', 'timers.json']) {
+    assert.ok(fs.existsSync(path.join(configPath, file)), `${file} should have been seeded`);
+  }
+  console.log('a fresh data dir gets the shipped config: ok');
+
+  const mine = '{"!mycommand":"mine"}';
+  fs.writeFileSync(path.join(configPath, 'commands.json'), mine);
+  res = seed();
+  assert.strictEqual(res.status, 0, `second seedDefaults failed: ${res.stderr}`);
+  assert.strictEqual(
+    fs.readFileSync(path.join(configPath, 'commands.json'), 'utf8'),
+    mine,
+    'seeding must never overwrite a config file the user already has'
+  );
+  fs.rmSync(seedDir, { recursive: true, force: true });
+  console.log('seeding leaves existing config alone: ok');
+}
+
+// TTS audio moved out of public/ and into the data dir, so it needs its own
+// static mount. Without it every alert renders silently: the overlay asks
+// for /tts/<id>.wav and gets a 404, which nothing in the bot logs as an
+// error because the alert itself succeeded.
+//
+// Runs in a child process with the data dir pointed somewhere else on
+// purpose. In a checkout the TTS folder sits inside public/, so the main
+// static mount answers for it and this passes whether or not the /tts mount
+// exists at all. Moving the data dir outside public/ is what makes the test
+// mean something, and it is also the installed layout being reproduced.
+//
+// Two ordering traps, both already paid for: the probe file has to be
+// written after src/ttsEngine is required, because it sweeps the folder
+// clean at load time, and the request needs agent:false, because Node keeps
+// pooled sockets alive and an earlier test in this suite has already
+// spoken to this port on a server that is now closed.
+async function checkTtsIsServedFromDataDir() {
+  const relocated = fs.mkdtempSync(path.join(os.tmpdir(), 'twitch-bot-tts-'));
+  const port = 8093;
+  const probeScript = `
+    const fs = require('fs');
+    const path = require('path');
+    const http = require('http');
+    const paths = require('./src/paths');
+    const alertServer = require('./src/alertServer');
+    const server = alertServer.start();
+    server.once('listening', () => {
+      fs.mkdirSync(paths.ttsDir, { recursive: true });
+      fs.writeFileSync(path.join(paths.ttsDir, 'probe.wav'), 'probe');
+      http.get({ host: 'localhost', port: ${port}, path: '/tts/probe.wav', agent: false }, (res) => {
+        console.log('TTS_STATUS=' + res.statusCode);
+        res.resume();
+        require('./src/channelStats').stop();
+        server.close(() => process.exit(0));
+      }).on('error', (e) => { console.log('TTS_STATUS=error ' + e.message); process.exit(1); });
+    });
+  `;
+
+  const res = spawnSync(process.execPath, ['-e', probeScript], {
+    cwd: path.join(__dirname, '..'),
+    encoding: 'utf8',
+    env: Object.assign({}, process.env, {
+      TWITCH_BOT_DATA_DIR: relocated,
+      ALERT_SERVER_PORT: String(port),
+    }),
+  });
+
+  assert.strictEqual(res.status, 0, `TTS probe failed: ${res.stderr}`);
+  assert.ok(
+    /TTS_STATUS=200/.test(res.stdout),
+    `the TTS directory must be reachable at /tts/<file>, got: ${res.stdout.trim()}`
+  );
+  assert.ok(
+    !path.resolve(relocated).startsWith(path.resolve(__dirname, '..', 'public')),
+    'the probe must run against a TTS dir outside public/, or the main static mount answers for it'
+  );
+  fs.rmSync(relocated, { recursive: true, force: true });
+  console.log('generated TTS is served from the data dir, outside public/: ok');
+}
+
+// The installed updater decides whether to offer an update by comparing
+// version strings, so an off-by-one here either nags forever or never
+// offers anything at all.
+function checkVersionCompare() {
+  const release = require('../src/release');
+  assert.strictEqual(release.compareVersions('0.7.0', '0.6.0'), 1);
+  assert.strictEqual(release.compareVersions('0.6.0', '0.7.0'), -1);
+  assert.strictEqual(release.compareVersions('0.7.0', '0.7.0'), 0);
+  assert.strictEqual(release.compareVersions('v0.7.0', '0.7.0'), 0, 'a leading v is a tag convention, not a version difference');
+  assert.strictEqual(release.compareVersions('0.7', '0.7.0'), 0, 'missing parts count as zero');
+  assert.strictEqual(release.compareVersions('0.10.0', '0.9.0'), 1, 'version parts are numbers, not text');
+  console.log('release version comparison: ok');
+}
+
+// The version is written in two places: package.json, which the installer
+// and the release check read, and a const in the panel's C# source, which
+// is what a user actually sees in the corner of the window. They drifted
+// apart once already, which is invisible until someone reports a bug
+// against a version that was never released.
+function checkVersionsAgree() {
+  const root = path.join(__dirname, '..');
+  const pkg = require('../package.json').version;
+  const cs = fs.readFileSync(path.join(root, 'installer', 'ControlProgram.cs'), 'utf8');
+  const match = cs.match(/private const string AppVersion = "([^"]+)"/);
+  assert.ok(match, 'could not find AppVersion in ControlProgram.cs');
+  assert.strictEqual(match[1], pkg, 'the control panel version must match package.json');
+  console.log(`version agrees across package.json and the panel (${pkg}): ok`);
+}
+
+// The installer script names files by path. A renamed icon or a moved
+// control panel breaks the build with an Inno Setup error that reads
+// nothing like its cause, and only at release time.
+function checkInstallerScriptReferences() {
+  const root = path.join(__dirname, '..');
+  const iss = fs.readFileSync(path.join(root, 'installer', 'twitch-bot.iss'), 'utf8');
+
+  assert.ok(
+    iss.includes('AppId={{A7F3C1E2-5B94-4D6A-9E31-2C8F0B7D4A15}'),
+    'the AppId must not change: it is what makes a reinstall an upgrade rather than a second install'
+  );
+  assert.ok(fs.existsSync(path.join(root, 'native', 'icon.ico')), 'installer icon is missing');
+  assert.ok(fs.existsSync(path.join(root, 'bin', 'twitch-bot-control.exe')), 'the control panel exe the shortcuts point at is missing');
+  console.log('installer script references resolve: ok');
+}
+
 // scripts/checkUpdate.js must never modify the working tree: a running
 // .exe cannot be overwritten by git, so a check that quietly pulled would
 // fail exactly when the control panel is open, which is always.
@@ -423,6 +609,15 @@ async function run() {
 
   // --- Mute alerts ---
   await checkMuteAlerts();
+
+  // --- Installed layout ---
+  checkPathsInCheckout();
+  checkPathsWhenRelocated();
+  checkConfigSeeding();
+  await checkTtsIsServedFromDataDir();
+  checkVersionCompare();
+  checkVersionsAgree();
+  checkInstallerScriptReferences();
 
   // --- Update check ---
   checkUpdateScriptIsReadOnly();

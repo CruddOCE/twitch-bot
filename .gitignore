@@ -3,6 +3,8 @@ node_modules/
 *.log
 logs/
 public/tts/
+# Built installers. They belong on a GitHub release, not in the repo.
+dist/
 # Local working notes / session state, not project documentation.
 HANDOFF.md
 HANDOFF-WIP.md

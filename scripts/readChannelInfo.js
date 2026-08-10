@@ -16,7 +16,7 @@
 //
 // Usage: node scripts/readChannelInfo.js
 
-require('dotenv').config();
+require('dotenv').config({ path: require('../src/paths').envPath });
 const twitchApi = require('../src/twitchApi');
 
 async function main() {

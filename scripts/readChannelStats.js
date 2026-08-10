@@ -19,7 +19,7 @@
 //
 // Usage: node scripts/readChannelStats.js
 
-require('dotenv').config();
+require('dotenv').config({ path: require('../src/paths').envPath });
 const channelStats = require('../src/channelStats');
 
 function show(value, absent) {

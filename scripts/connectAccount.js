@@ -10,13 +10,13 @@
 // Optional: TWITCH_CLIENT_ID (defaults to the shared built-in app)
 
 const fs = require('fs');
-const path = require('path');
+const paths = require('../src/paths');
 const twitchAuth = require('../src/twitchAuth');
 
-const ROOT = path.join(__dirname, '..');
-const ENV_PATH = path.join(ROOT, '.env');
+const ENV_PATH = paths.envPath;
 
 function readEnvFile() {
+  paths.migrateLegacyEnv();
   if (!fs.existsSync(ENV_PATH)) return {};
   const result = {};
   for (const line of fs.readFileSync(ENV_PATH, 'utf8').split(/\r?\n/)) {
@@ -30,6 +30,7 @@ function readEnvFile() {
 }
 
 function writeEnvFile(env) {
+  paths.ensureDataDir();
   const lines = Object.entries(env)
     .filter(([, v]) => v !== undefined && v !== '')
     .map(([k, v]) => `${k}=${v}`);

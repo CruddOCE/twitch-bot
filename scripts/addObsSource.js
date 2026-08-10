@@ -8,7 +8,7 @@
 // Reads OBS_WEBSOCKET_PASSWORD from .env (leave it blank and OBS's own
 // saved password is used) and ALERT_SERVER_PORT for the overlay URL.
 
-require('dotenv').config();
+require('dotenv').config({ path: require('../src/paths').envPath });
 const { connectAuthenticated, sendRequest } = require('../src/obsWebSocket');
 const logger = require('../src/logger');
 

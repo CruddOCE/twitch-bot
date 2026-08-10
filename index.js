@@ -1,4 +1,10 @@
-require('dotenv').config();
+const paths = require('./src/paths');
+
+// Must run before dotenv: an upgraded install still has its only .env in
+// the program folder, and loading an absent one would drop the token.
+paths.migrateLegacyEnv();
+require('dotenv').config({ path: paths.envPath });
+
 const configStore = require('./src/configStore');
 const alertServer = require('./src/alertServer');
 const twitchBot = require('./src/twitchBot');

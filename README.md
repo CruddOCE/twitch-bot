@@ -5,12 +5,17 @@ on your own machine (no hosting required). This is a leaner, Twitch-only
 sibling of [stream-bot](https://github.com/CruddOCE/stream-bot): same core
 engine, no YouTube setup, no Google Cloud project needed.
 
-## Status: 0.6.0, undergoing testing
+## Status: 0.7.0, undergoing testing
 
 **This is a personal project under active development, and parts of it have
 not been tested on a real stream yet.** It works, and the offline test suite
 passes, but "passes its tests" and "proven live in front of viewers" are not
 the same thing. Treat it accordingly if you run it on your own channel.
+
+**0.7.0 makes this a normal Windows program.** There is now a real installer,
+`twitch-bot-setup-0.7.0.exe`, which bundles the Node.js runtime and every
+dependency, so there is nothing to install first and nothing to run in a
+terminal. See **Installing** below.
 
 **Unreleased since 0.6.0:** a Channel card on the dashboard for editing the
 stream title and category, described under **Setting the title and category**
@@ -81,44 +86,68 @@ Issues and pull requests are welcome, but please assume rough edges.
 
 ## Requirements
 
-- [Node.js](https://nodejs.org/) 18 or newer.
+- 64-bit Windows 10 or 11.
 - A Twitch account for the bot to log in as (can be your main account or a
   separate one, though a separate one is recommended so chat clearly shows the
   bot as a bot).
 - For moderation actions (timeout/delete), the bot account must be a
   moderator in your channel: type `/mod <botname>` in your own Twitch chat.
 
-## Easiest: double-click install-twitch-bot.exe
+Node.js is **not** a requirement if you use the installer: it ships its own
+copy. You only need [Node.js](https://nodejs.org/) 18 or newer if you are
+running from a git checkout instead.
 
-Double-click [`install-twitch-bot.exe`](install-twitch-bot.exe). It sits at
-the top level on its own, so it's the one file here meant to be run
-directly. It just opens
-[`bin/twitch-bot-control.exe`](bin/twitch-bot-control.exe), the control panel
-below. There's no separate installer or console wizard: the control panel
-itself walks you through everything the first time it's run.
+## Installing
+
+Download `twitch-bot-setup-<version>.exe` from the
+[releases page](https://github.com/CruddOCE/twitch-bot/releases) and run it.
+That is the whole thing. It installs to `C:\Program Files\twitch-bot`, adds
+a Start Menu entry (and a Desktop shortcut if you tick the box), and appears
+in **Settings > Apps** like any other program.
+
+Two things worth knowing on first run:
+
+- Windows asks for administrator permission, because it installs to Program
+  Files. The bot itself runs as you, not as an administrator.
+- Windows may show **"Windows protected your PC"** the first time. The
+  installer is not signed with a code-signing certificate, which costs money
+  and this project does not have one, so SmartScreen has nothing to check it
+  against. Click **More info**, then **Run anyway**.
+
+Everything the bot needs is inside the installer: the Node.js runtime, all
+dependencies, the overlay, the TTS helper. It does not need internet access
+during setup, and it never runs `npm install` on your machine.
+
+Once installed, open **twitch-bot** from the Start Menu. There is a single
+setup step left, connecting your Twitch account, described next.
 
 ## The control panel: bin/twitch-bot-control.exe
 
 This is the whole app. First-run setup and day-to-day use both happen
-here, via the Desktop shortcut or by running it directly.
+here, via the Start Menu entry, the Desktop shortcut, or by running it
+directly.
 
-**First run**, it shows a setup screen with three steps, each with its own
-status and action button:
-1. **Node.js**, checked automatically. If it's missing, click **Download
-   Node.js**, install it, then **Recheck**.
-2. **Install Dependencies**, one click, runs `npm install` and streams the
-   output live.
-3. **Connect your Twitch account**: enter the bot's username and your
+**First run** on an installed copy shows a setup screen with a single step:
+
+1. **Connect your Twitch account**: enter the bot's username and your
    channel name, click **Connect**, and sign in via Twitch's own login page
    in your browser. No Twitch Developer Console and no Client ID to paste
    in, since it uses a built-in shared app.
 
-Once all three are done, it switches automatically to the dashboard, with
-nothing to restart. Re-opening the app later skips straight to the
-dashboard since everything's already set up. The setup screen stays
-reachable from the **Setup** item in the left rail, where the third step's
-button becomes **Reconnect**: use it to re-authorise when the token needs
-a scope it was not originally granted.
+Running from a git checkout instead, the same screen shows two extra steps
+ahead of it, because a checkout has neither a bundled runtime nor its
+dependencies installed: **Node.js**, checked automatically with a **Download
+Node.js** button and a **Recheck** if it's missing, and **Install
+Dependencies**, one click, which runs `npm install` and streams the output
+live. The installed app hides both because it ships its own Node.js and its
+own `node_modules`, so there is nothing for you to do there.
+
+Once that's done, it switches automatically to the dashboard, with nothing
+to restart. Re-opening the app later skips straight to the dashboard since
+everything's already set up. The setup screen stays reachable from the
+**Setup** item in the left rail, where the Connect button becomes
+**Reconnect**: use it to re-authorise when the token needs a scope it was
+not originally granted.
 
 **Day-to-day**, the dashboard is a proper control panel, not a bare console
 window. It uses the workspace design system in `../ui-kit`, so it matches
@@ -229,15 +258,39 @@ The **content column** holds:
 Closing the window stops the bot if it's running, so there's no separate
 "turn it off" step to remember after a stream.
 
-Both `.exe`s (source in [`installer/`](installer)) and the TTS helper
-(source in [`native/`](native)) are compiled with the C# compiler that
-ships with Windows, so nothing is downloaded to build them.
+The control panel and the uninstaller (source in [`installer/`](installer))
+and the TTS helper (source in [`native/`](native)) are compiled with the C#
+compiler that ships with Windows, so nothing is downloaded to build them.
+
+## Where your settings live
+
+An installed copy cannot write to its own folder, because Program Files is
+read-only for the account running it. Everything it saves goes here instead:
+
+```
+%APPDATA%\twitch-bot
+```
+
+which is `C:\Users\<you>\AppData\Roaming\twitch-bot`. Inside it:
+
+- `.env`: your Twitch login and settings.
+- `config\*.json`: your commands, timers, jokes, alerts and moderation
+  rules. Copied from the shipped defaults the first time the bot runs, then
+  left alone. **Updating never overwrites them.**
+- `logs\bot.log`: the action log.
+- `public\tts\`: generated speech audio, cleaned up as it goes.
+
+Those files survive uninstalling unless you say otherwise, so reinstalling
+picks up exactly where you left off. Running from a git checkout keeps all
+four in the project folder instead, exactly as it did before 0.7.0.
 
 ## Manual / command-line setup
 
-If you'd rather not use the `.exe`s above:
+If you'd rather not use the installer:
 
-1. Clone this repo and open a terminal in it.
+1. Clone this repo and open a terminal in it. This needs
+   [Node.js](https://nodejs.org/) 18 or newer, since a checkout has no
+   bundled runtime.
 2. Run the guided setup wizard:
    ```
    npm run setup
@@ -436,30 +489,81 @@ immediately.
 
 ## Updating
 
-Click **Update** in the control panel, or run:
+Click **Update** in the control panel. What that does depends on how the bot
+got onto the machine, and it works out which by itself.
+
+**An installed copy** asks GitHub for the latest release, downloads that
+version's installer and runs it over the top. The app closes, Windows asks
+for permission to run the installer, and the panel reopens on the new
+version. Your settings, commands and login are untouched: they live in
+`%APPDATA%\twitch-bot`, which the installer never writes to.
+
+**A git checkout** pulls instead, preserving your local `config/*.json`
+customizations (it stashes them, pulls, then reapplies; on a genuine
+conflict, nothing is lost, you just resolve it manually via `git status`).
+The same thing from a terminal:
 ```
 npm run update
 ```
-Pulls the latest version from GitHub, preserving your local `config/*.json`
-customizations (it stashes them, pulls, then reapplies; on a genuine conflict,
-nothing is lost, you just resolve it manually via `git status`).
 
 To find out whether an update exists without applying one:
 ```
 node scripts/checkUpdate.js
 ```
-This is what **Check for updates on launch** runs. It fetches and reports how
-far behind you are, and never touches the working tree.
+This is what **Check for updates on launch** runs. It reports whether a newer
+release (or, in a checkout, how many commits) is waiting, and never touches
+the working tree or the installed files.
 
 ## Uninstalling
 
-Double-click [`bin/uninstall-twitch-bot.exe`](bin/uninstall-twitch-bot.exe),
-or run:
+If you used the installer: **Settings > Apps > Installed apps**, find
+**twitch-bot**, and choose Uninstall. It asks once whether to also delete
+your settings and Twitch login from `%APPDATA%\twitch-bot`, and defaults to
+keeping them, so say No if you plan to reinstall.
+
+If you're running from a git checkout, double-click
+[`bin/uninstall-twitch-bot.exe`](bin/uninstall-twitch-bot.exe), or run:
 ```
 npm run uninstall
 ```
 Removes `node_modules` and, if you choose, your `.env` credentials. Never
 touches your source code, config, or git history.
+
+## Building the installer
+
+Requires [Inno Setup](https://jrsoftware.org/isdl.php) 6.3 or newer, which
+is the only build dependency this project has:
+
+```
+winget install JRSoftware.InnoSetup
+```
+
+Then, from the project root:
+
+```
+npm run build-installer
+```
+
+That writes `dist\twitch-bot-setup-<version>.exe`, around 24 MB, most of
+which is the bundled Node.js runtime.
+
+Compile the control panel first if you have changed it. The build refuses to
+run when `bin\twitch-bot-control.exe` is older than
+`installer\ControlProgram.cs`, because the version the panel displays is a
+const baked into that C# and a stale exe ships a stale version number with
+every test still passing.
+
+The build stages a clean copy in a temp folder rather than compiling the
+working tree, so a real `.env`, the log file and the `versions/` archive
+cannot end up inside a public installer. The payload is an allowlist in
+[`scripts/build-installer.js`](scripts/build-installer.js), so a new file at
+the project root is excluded until it is added there deliberately, and the
+build refuses outright if a `.env` or `.git` reaches the staging folder.
+
+The bundled runtime is the `node.exe` running the build, so build with the
+Node version you want shipped. `installer/twitch-bot.iss` holds the Inno
+Setup script itself, including the fixed `AppId` that makes a reinstall
+upgrade in place rather than pile up a second entry in Add/Remove Programs.
 
 ## Project layout
 
@@ -485,19 +589,27 @@ touches your source code, config, or git history.
   followers and subscribers, caches them, and backs off when a lookup
   fails. The alert server's `/status` serves that cache, which is what
   keeps the panel's 5 second poll from turning into Helix traffic.
+- `src/paths.js`: decides where the writable state (`.env`, config, logs,
+  TTS audio) lives, which differs between an installed copy and a checkout.
+  Everything that reads or writes those goes through here.
+- `src/release.js`: the GitHub Releases lookup and installer download used
+  by the update path on an installed copy.
 - `scripts/`: setup wizard, token refresh, update, `checkUpdate.js` (the
-  read-only "are we behind?" check), uninstall, the OBS WebSocket
-  integration, and `connectAccount.js` (the non-interactive sign-in step
-  the control panel's setup screen runs).
+  read-only "are we behind?" check), uninstall, `build-installer.js` (builds
+  the installer pack), the OBS WebSocket integration, and
+  `connectAccount.js` (the non-interactive sign-in step the control panel's
+  setup screen runs).
 - `bin/`: the compiled binaries and the batch entry points, kept out of the
-  project root so the root stays readable. `install-twitch-bot.exe` is the
-  deliberate exception and stays at the top level, since a fresh download
-  needs exactly one obvious thing to double-click. Note that the control
-  panel derives the project root as its own parent directory, so it has to
-  sit exactly one level down; moving `bin/` deeper breaks the bot launch,
-  the setup wizard and the update path together.
-- `installer/`: C# source for the three compiled GUI `.exe`s (control
-  panel, installer, uninstaller), which build into `bin/`.
+  project root so the root stays readable. Note that the control panel
+  derives the project root as its own parent directory, so it has to sit
+  exactly one level down; moving `bin/` deeper breaks the bot launch, the
+  setup wizard and the update path together.
+- `runtime/`: present only in an installed copy, holding the bundled
+  `node.exe`. Its presence is also what tells the control panel to hide the
+  Node.js and dependency setup steps.
+- `installer/`: C# source for the two compiled GUI `.exe`s (control panel
+  and the checkout uninstaller), which build into `bin/`, plus
+  `twitch-bot.iss`, the Inno Setup script for the installer pack.
 - `native/`: C# source for `bin/tts-helper.exe` (the compiled speech
   synthesizer `ttsEngine.js` calls out to) and the app icon. Both
   `installer/` and `native/` compile with the C# compiler that ships with

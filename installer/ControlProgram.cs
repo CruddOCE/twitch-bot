@@ -642,13 +642,18 @@ class IssueDialog : Form
 
 class MainForm : Form
 {
-    private const string AppVersion = "0.6.0";
+    private const string AppVersion = "0.7.0";
     private const int RailWidth = 232;
     private const int TopBarHeight = 64;
 
     private readonly string rootDir;
     private Process botProcess;
     private bool nodeAvailable;
+    // True when this copy came from the installer rather than a git
+    // checkout: the runtime and node_modules are both bundled, so the
+    // first two setup steps have nothing left to ask the user for.
+    private bool isPackagedInstall;
+    private string bundledNodePath;
     private bool hasEnteredDashboard;
     private bool isReady;
 
@@ -750,6 +755,11 @@ class MainForm : Form
         // Everything below resolves off rootDir, so getting this wrong breaks
         // the bot launch, the setup wizard and the update path all at once.
         rootDir = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, ".."));
+
+        // Set before the panels are built: BuildSetupPanel decides how many
+        // steps to show from this.
+        bundledNodePath = Path.Combine(rootDir, "runtime", "node.exe");
+        isPackagedInstall = File.Exists(bundledNodePath);
 
         Text = "twitch-bot";
         Width = 940;
@@ -1427,16 +1437,22 @@ class MainForm : Form
         };
         var subtitle = new Label
         {
-            Text = "A few quick steps, then you're ready to start the bot.",
+            Text = isPackagedInstall
+                ? "One quick step, then you're ready to start the bot."
+                : "A few quick steps, then you're ready to start the bot.",
             Font = Theme.Body,
             ForeColor = Theme.TextMuted,
             Dock = DockStyle.Top,
             Height = 30,
         };
 
+        // The first two steps are still built on a packaged install even
+        // though they are never shown: RefreshSetupState writes to their
+        // badges and labels unconditionally, and the readiness check reads
+        // the same state either way.
         var step1 = BuildStep("1", "Node.js", out nodeBadge, out nodeDot, out nodeStatusLabel, BuildNodeStepControls());
         var step2 = BuildStep("2", "Install dependencies", out depsBadge, out depsDot, out depsStatusLabel, BuildDepsStepControls());
-        var step3 = BuildStep("3", "Connect your Twitch account", out accountBadge, out accountDot, out accountStatusLabel, BuildAccountStepControls());
+        var step3 = BuildStep(isPackagedInstall ? "1" : "3", "Connect your Twitch account", out accountBadge, out accountDot, out accountStatusLabel, BuildAccountStepControls());
 
         var logCard = new Card(Theme.Surface1) { Dock = DockStyle.Fill };
         var logHeader = new Label
@@ -1468,8 +1484,11 @@ class MainForm : Form
         panel.Controls.Add(logCard);
         panel.Controls.Add(logSpacer);
         panel.Controls.Add(step3);
-        panel.Controls.Add(step2);
-        panel.Controls.Add(step1);
+        if (!isPackagedInstall)
+        {
+            panel.Controls.Add(step2);
+            panel.Controls.Add(step1);
+        }
         panel.Controls.Add(subtitle);
         panel.Controls.Add(title);
 
@@ -1698,6 +1717,11 @@ class MainForm : Form
 
     private string ResolveNodePath()
     {
+        // The bundled runtime wins over anything installed system-wide, so
+        // the bot always runs on the version it shipped with and a user
+        // with no Node.js at all is never asked to go and get one.
+        if (bundledNodePath != null && File.Exists(bundledNodePath)) return bundledNodePath;
+
         string pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
         string pfx86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
         string[] candidates = { Path.Combine(pf, "nodejs", "node.exe"), Path.Combine(pfx86, "nodejs", "node.exe") };
@@ -2592,11 +2616,27 @@ class MainForm : Form
         }
     }
 
+    // Where the user's writable state lives. Must agree with src/paths.js:
+    // Program Files is not user-writable, so an installed copy keeps its
+    // .env, config, logs and TTS output under %APPDATA% instead. A
+    // checkout keeps everything in the project folder as before.
+    // Tested on .git and not on the bundled runtime, because src/paths.js
+    // draws the line in exactly that place: a hand-unzipped release has no
+    // .git either, and both sides have to agree on where the .env is or the
+    // panel reads a different file from the bot it launches.
+    private string ResolveDataDir()
+    {
+        string gitPath = Path.Combine(rootDir, ".git");
+        bool isCheckout = Directory.Exists(gitPath) || File.Exists(gitPath);
+        if (isCheckout) return rootDir;
+        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "twitch-bot");
+    }
+
     // Minimal .env reader -- just enough to pick up config values without
     // pulling in a full parser.
     private string GetEnvValue(string key, string defaultValue)
     {
-        string envPath = Path.Combine(rootDir, ".env");
+        string envPath = Path.Combine(ResolveDataDir(), ".env");
         if (!File.Exists(envPath)) return defaultValue;
         foreach (string line in File.ReadAllLines(envPath))
         {
@@ -2618,7 +2658,9 @@ class MainForm : Form
             return;
         }
 
-        AppendLog("This app will close, update, then reopen automatically. A console window will show progress.");
+        AppendLog(isPackagedInstall
+            ? "This app will close, download the update and reinstall itself, then reopen automatically. Windows will ask you to allow the installer."
+            : "This app will close, update, then reopen automatically. A console window will show progress.");
 
         try
         {
@@ -2638,16 +2680,29 @@ class MainForm : Form
     // a detached watcher that waits for THIS process to fully exit
     // (releasing the file lock), runs the update, then relaunches the
     // control panel.
+    //
+    // On a packaged install there is a third step in the middle. update.js
+    // only downloads the new installer, because it is itself running under
+    // the bundled runtime\node.exe that the installer has to overwrite.
+    // Running the downloaded file from here instead means node has already
+    // exited and nothing under the program folder is locked. The path is
+    // fixed by src/release.js so it can be named literally here.
     private void StartUpdateWatcher()
     {
         string nodeExe = ResolveNodePath();
         string updateScript = Path.Combine(rootDir, "scripts", "update.js");
         string controlExe = Path.Combine(rootDir, "bin", "twitch-bot-control.exe");
+        string downloadedInstaller = Path.Combine(Path.GetTempPath(), "twitch-bot-update", "twitch-bot-setup.exe");
         int myPid = Process.GetCurrentProcess().Id;
+
+        // "if exist" rather than an unconditional run: a checkout's update
+        // path never produces this file, and the same chain serves both.
+        string installStep = "& if exist \"" + downloadedInstaller + "\" \"" + downloadedInstaller + "\" /SILENT /NORESTART ";
 
         string watcherCommand =
             "powershell -NoProfile -Command \"Wait-Process -Id " + myPid + " -ErrorAction SilentlyContinue\" " +
             "&& \"" + nodeExe + "\" \"" + updateScript + "\" " +
+            installStep +
             "& \"" + controlExe + "\"";
 
         var psi = new ProcessStartInfo
