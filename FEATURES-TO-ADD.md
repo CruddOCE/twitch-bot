@@ -1,6 +1,6 @@
 # Features to add to twitch bot
 
-Forty two features planned for this project, in the order they get added.
+Fifty one features planned for this project, in the order they get added.
 
 Twitch only. Nothing here assumes a second streaming platform.
 
@@ -797,9 +797,185 @@ from a broken layout.
 
 ---
 
+# Phase 8: Panel management
+
+Editing the bot's own content from the panel, instead of opening a JSON file in
+a text editor while the stream is running. The shape of this phase comes from
+the StreamElements dashboard's panel picker.
+
+**These are numbered last but they are not costed last.** Items 43 to 46 are
+Phase 1 cheap and depend on nothing in Phases 4 to 7, so they can be pulled
+forward ahead of the activity feed whenever they are wanted. They sit at the
+bottom only because renumbering would break the thirty-odd cross-references
+between items 16 and 42.
+
+### What makes this phase cheap
+
+Three things are already true in the repo, and all of them work in this phase's
+favour.
+
+**Config is already live-reloaded.** `src/configStore.js` runs `fs.watch` on
+every file in `config/` with a 150ms debounce and a listener fan-out. A panel
+that writes `commands.json` takes effect immediately, with no restart and no new
+plumbing on the bot side. This single fact is what turns "build a command
+editor" from a subsystem into a form.
+
+**Commands are read per message, not cached.** `handle()` in `src/commands.js`
+calls `configStore.get('commands')` on every message, so an edit made mid-stream
+applies to the very next line of chat.
+
+**The data shapes are trivial.** Custom commands are a flat
+`{ name: response }` map, jokes are a flat array of strings. The editor is a
+two-column grid and a list box, not a schema.
+
+### The one hazard, worth reading before writing any of it
+
+**The panel must write these files in place, and must not save via rename.** An
+atomic write (write a temp file, rename it over the target) is the usual correct
+answer and is the wrong answer here. `fs.watch` is bound to the file it was
+handed, and renaming over that file on Windows drops the watch. Hot reload then
+dies silently and stays dead until the bot is restarted, which is precisely the
+failure that makes an editor feel broken. `src/configStore.js` already carries a
+comment about a watched file briefly vanishing during an editor's rename-save,
+so the problem is known; it has just never had a writer on the other end of it
+before.
+
+Write the whole file with a single `File.WriteAllText`, and expect the reload
+listener to fire once per save.
+
+### 43. Command editor
+*a few days*
+**Does:** Add, edit, rename and delete custom commands from the panel, with each
+command's cooldown edited alongside it.
+**How:** A grid over `config/commands.json`, which is a flat
+`{ name: response }` map, with a third column reading and writing `perCommand`
+in `config/cooldowns.json`. The built-in commands (`!uptime`, `!commands`,
+`!joke`, `!pp`, `!so`, `!lurk`, `!unlurk`, `!title`, `!game`) are listed
+read-only in the same grid, because a list showing only half the commands that
+exist is worse than no list at all.
+**Watch for:** the command name is the map key, so renaming is a delete plus an
+insert, and doing that naively drops any cooldown keyed to the old name. Reject
+a custom command that shadows a builtin at edit time as well: `handle()` checks
+`BUILTINS` first, so a custom `joke` is accepted by the file and then silently
+never fires.
+**Why first in the phase:** it is the item this phase exists for, and items 44
+to 46 are largely the same editor pointed at other files.
+
+### 44. Joke list editor
+*hours*
+**Does:** Add, edit, remove and reorder the lines `!joke` picks from.
+**How:** `config/jokes.json` is a flat array of strings, currently 41 of them.
+A list box plus Add, Edit and Remove, saving the array back. Nearly free once
+item 43 has built the load, validate and save path.
+**Worth building while in there:** a Test button that runs the selected line
+through `alertServer.alert('joke', ...)`, so a new joke can be seen in the
+overlay before it is seen by chat.
+
+### 45. Timer editor
+*hours*
+**Does:** Edits the recurring chat messages and how often they fire.
+**How:** `config/timers.json` holds `enabled`, `intervalMinutes` and a
+`messages` array, so this is a tick, a number field, and item 44's list editor.
+`src/timers.js` already reacts to a config change, so nothing new is needed on
+the bot side.
+**Watch for:** an interval of zero, and an empty message list while `enabled` is
+true. Both are reachable from a form and neither means anything.
+
+### 46. Bot module toggles
+*hours*
+**Does:** Turns whole subsystems on and off from one card: moderation, timers,
+alerts, cooldowns.
+**How:** The cheapest item in the phase, because every flag already exists.
+`moderation.json`, `timers.json`, `alerts.json` and `cooldowns.json` each carry
+an `enabled` boolean the code already honours. Four ticks writing four booleans.
+**Why it earns its place anyway:** those flags are currently only reachable by
+opening four separate files by hand, which means in practice they never get
+touched.
+
+### 47. Counters
+*a few days*
+**Does:** Named tallies chat can increment and the panel can edit, for deaths,
+wipes, or whatever the run is counting.
+**How:** The only item in this phase with no existing foundation. Needs a new
+`config/counters.json` wired into `configStore`'s `FILES` and `DEFAULTS`, a
+`!counter` command family in `src/commands.js`, and a decision about who is
+allowed to increment.
+**Watch for:** counters are the one config file the **bot** writes, not just the
+user. Everything else in `config/` is read-only from the bot's side, so an
+increment arriving while the panel has the file open is a real write conflict
+rather than a theoretical one. Settle the ownership before writing the feature.
+The straightforward answer is that the bot owns the value and the panel asks it
+to change through the alert server, rather than both ends writing the same file.
+
+### 48. Quick Actions
+*a day*
+**Does:** A configurable row of buttons for the things done most often, so they
+are one click rather than a hunt through the panel.
+**How:** The actions themselves already exist: Reload Overlays, Test Alert, Mute
+Alerts, Update Channel, and after item 43, any custom command. This is a
+configurable launcher over existing handlers, not new behaviour.
+**Watch for:** the left rail is a fixed stack that already sets the window's
+minimum height, and Phase 1 proved that adding to it eats the readout rows off
+the top. This belongs in the content column, or it raises `Height` and
+`MinimumSize` in `MainForm` deliberately.
+
+### 49. Preflight checklist
+*a day*
+**Does:** A pre-stream checklist, ticked off before going live.
+**How:** Entirely local. User-defined items, tick state, and a reset that clears
+every tick for the next stream. No Twitch involvement at all, which makes it the
+least risky item in the phase.
+**The reset is the feature.** A checklist still holding last stream's ticks is a
+checklist nobody trusts, so the reset has to be obvious, and it has to happen per
+stream rather than per launch.
+
+### 50. Polls
+*a few days*
+**Does:** Start, watch and end a Twitch poll from the panel.
+**How:** Helix `Create Poll`, `Get Polls` and `End Poll`. Needs
+`channel:manage:polls`, which is **not** in `SCOPES` today and should not be
+added until this item is built.
+**The scope precedent is item 9's.** `channel:manage:ads` was deliberately left
+out of the re-auth so the token could not run ads months before the feature
+existed. The same reasoning applies to a scope that can create viewer-facing
+polls. It costs one extra Reconnect when this lands, which is the cheaper side
+of the trade.
+**Watch for:** results are live, so they need either polling on a timer or
+EventSub. Item 34 would give this one for free, which is an argument for
+building polls after EventSub rather than before it.
+
+### 51. Predictions
+*a few days*
+**Does:** Start, lock, resolve and cancel a channel points prediction.
+**How:** Helix `Create Prediction` and `End Prediction`, scope
+`channel:manage:predictions`, held back until build time exactly as in item 50.
+**Why it costs more than polls despite a near-identical API:** resolving a
+prediction **moves channel points and cannot be undone**. Picking the wrong
+outcome pays out the wrong viewers permanently. It earns the same care item 35
+gets: a confirmation step, a guard against double-firing, and an unambiguous
+display when no prediction is running.
+
+### Where the rest of that dashboard's panels already live
+
+The panel picker this phase came from lists fourteen panels. Eight of them became
+items here, with item 44 added alongside because a joke list is the same editor
+as a command list. Multi-Chat is deliberately not on the list, for the reason at
+the bottom of this document. The remaining five are already covered, and are
+recorded here so they do not come back as gaps.
+
+| Panel | Covered by |
+| --- | --- |
+| Activity Feed | Item 15, and items 16 to 29 built on top of it |
+| Pending Tips | Item 37, which is where money events enter the project at all |
+| Stream Preview | Item 39, deferred, with the popout-player alternative worth doing instead |
+| Chat | Already shipped. Live in the panel via `src/chatEmit.js` |
+| Quick Settings | Items 9 and 10, the CHANNEL card's title and category fields |
+
+---
+
 ## Deliberately not on the list
 
-Four things worth naming so they do not get raised again as gaps:
+Five things worth naming so they do not get raised again as gaps:
 
 - **Standalone desktop app.** Already done. `bin/twitch-bot-control.exe` is a
   44KB native WinForms app.
@@ -811,3 +987,6 @@ Four things worth naming so they do not get raised again as gaps:
 - **Logout.** Effectively present. Clearing `TWITCH_OAUTH_TOKEN` from `.env` does
   it, and Setup step 3's Reconnect is the path back in. A labelled button would be
   cosmetic.
+- **Multi-chat.** One chat view merging Twitch with a second platform. Not
+  wanted, confirmed 2026-08-10. The opening line of this document still holds:
+  Twitch only, and nothing here assumes a second streaming platform.
