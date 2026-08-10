@@ -640,6 +640,355 @@ class IssueDialog : Form
     }
 }
 
+// Add and edit share one dialog, because the fields are identical and the
+// only difference is whether the name box starts filled. Editing a builtin
+// locks the name and the response and leaves the cooldown live, which is
+// exactly what the bot supports: checkCooldown() honours perCommand for
+// builtins, but their replies come from code.
+class CommandDialog : Form
+{
+    private readonly TextBox nameBox;
+    private readonly TextBox responseBox;
+    private readonly TextBox cooldownBox;
+    private readonly Label counterLabel;
+
+    public string CommandName { get { return nameBox.Text.Trim(); } }
+    public string Response { get { return responseBox.Text.Trim(); } }
+    public string Cooldown { get { return cooldownBox.Text.Trim(); } }
+
+    public CommandDialog(string title, string name, string response, string cooldown, bool isBuiltin)
+    {
+        Text = title;
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        StartPosition = FormStartPosition.CenterParent;
+        MinimizeBox = false;
+        MaximizeBox = false;
+        ShowInTaskbar = false;
+        BackColor = Theme.Surface1;
+        Font = Theme.Body;
+        ClientSize = new Size(520, 322);
+
+        var card = new Card(Theme.Surface1);
+        card.Location = new Point(16, 16);
+        card.Size = new Size(488, 244);
+
+        var nameLabel = new Label
+        {
+            Text = "Command",
+            Font = Theme.Small,
+            ForeColor = Theme.TextMuted,
+            BackColor = Theme.Surface2,
+            AutoSize = true,
+            Location = new Point(14, 16),
+        };
+
+        // 25 matches the script's own ceiling. Enforcing it here as well means
+        // an over-long name is impossible to type rather than rejected after a
+        // round trip through node.
+        nameBox = new TextBox
+        {
+            Location = new Point(14, 36),
+            Size = new Size(200, 24),
+            Font = Theme.Body,
+            BackColor = Theme.Surface3,
+            ForeColor = Theme.Text,
+            BorderStyle = BorderStyle.FixedSingle,
+            MaxLength = 25,
+            Text = name,
+            ReadOnly = isBuiltin,
+        };
+
+        var nameHint = new Label
+        {
+            Text = isBuiltin ? "Built in. The name and reply come from the bot's code." : "Lower case, no spaces. Typed in chat as !name",
+            Font = Theme.Small,
+            ForeColor = Theme.TextDim,
+            BackColor = Theme.Surface2,
+            AutoSize = true,
+            Location = new Point(224, 40),
+        };
+
+        var responseLabel = new Label
+        {
+            Text = "Reply",
+            Font = Theme.Small,
+            ForeColor = Theme.TextMuted,
+            BackColor = Theme.Surface2,
+            AutoSize = true,
+            Location = new Point(14, 72),
+        };
+
+        // Single line, not multiline: a chat message cannot carry a newline,
+        // so a box that accepts one is offering something the bot has to
+        // reject. 500 is Twitch's own per-message cap.
+        responseBox = new TextBox
+        {
+            Location = new Point(14, 92),
+            Size = new Size(460, 24),
+            Font = Theme.Body,
+            BackColor = Theme.Surface3,
+            ForeColor = Theme.Text,
+            BorderStyle = BorderStyle.FixedSingle,
+            MaxLength = 500,
+            Text = response,
+            ReadOnly = isBuiltin,
+        };
+
+        counterLabel = new Label
+        {
+            Text = "",
+            Font = Theme.Small,
+            ForeColor = Theme.TextDim,
+            BackColor = Theme.Surface2,
+            AutoSize = true,
+            Location = new Point(14, 122),
+        };
+        responseBox.TextChanged += (s, e) => UpdateCounter();
+
+        var cooldownLabel = new Label
+        {
+            Text = "Cooldown",
+            Font = Theme.Small,
+            ForeColor = Theme.TextMuted,
+            BackColor = Theme.Surface2,
+            AutoSize = true,
+            Location = new Point(14, 152),
+        };
+
+        cooldownBox = new TextBox
+        {
+            Location = new Point(14, 172),
+            Size = new Size(80, 24),
+            Font = Theme.Body,
+            BackColor = Theme.Surface3,
+            ForeColor = Theme.Text,
+            BorderStyle = BorderStyle.FixedSingle,
+            MaxLength = 4,
+            Text = cooldown,
+        };
+
+        var cooldownHint = new Label
+        {
+            Text = "Seconds between uses, per viewer. Leave empty to use the default.",
+            Font = Theme.Small,
+            ForeColor = Theme.TextDim,
+            BackColor = Theme.Surface2,
+            AutoSize = true,
+            Location = new Point(104, 176),
+        };
+
+        card.Controls.Add(nameLabel);
+        card.Controls.Add(nameBox);
+        card.Controls.Add(nameHint);
+        card.Controls.Add(responseLabel);
+        card.Controls.Add(responseBox);
+        card.Controls.Add(counterLabel);
+        card.Controls.Add(cooldownLabel);
+        card.Controls.Add(cooldownBox);
+        card.Controls.Add(cooldownHint);
+
+        var cancelButton = new KitButton("Cancel", BtnKind.Ghost, Theme.Surface1)
+        {
+            Location = new Point(16, 274),
+            Size = new Size(120, 32),
+            DialogResult = DialogResult.Cancel,
+        };
+
+        var saveButton = new KitButton("Save", BtnKind.Primary, Theme.Surface1)
+        {
+            Location = new Point(384, 274),
+            Size = new Size(120, 32),
+            DialogResult = DialogResult.OK,
+        };
+
+        Controls.Add(card);
+        Controls.Add(cancelButton);
+        Controls.Add(saveButton);
+
+        AcceptButton = saveButton;
+        CancelButton = cancelButton;
+
+        UpdateCounter();
+        // Editing starts on the reply, since the name is usually the part that
+        // is already right. Adding starts on the name.
+        Shown += (s, e) => { ActiveControl = string.IsNullOrEmpty(name) ? nameBox : responseBox; };
+    }
+
+    private void UpdateCounter()
+    {
+        int used = responseBox.Text.Length;
+        counterLabel.Text = used + " / 500";
+        counterLabel.ForeColor = used > 450 ? Theme.Warn : Theme.TextDim;
+    }
+}
+
+// Renaming is its own dialog rather than an editable name box on CommandDialog,
+// because the two are different operations on the bot's side: a save writes a
+// key, a rename moves one and carries the cooldown with it. Putting both behind
+// one Save button would mean guessing which was meant.
+class RenameDialog : Form
+{
+    private readonly TextBox nameBox;
+
+    public string NewName { get { return nameBox.Text.Trim(); } }
+
+    public RenameDialog(string currentName)
+    {
+        Text = "Rename a command";
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        StartPosition = FormStartPosition.CenterParent;
+        MinimizeBox = false;
+        MaximizeBox = false;
+        ShowInTaskbar = false;
+        BackColor = Theme.Surface1;
+        Font = Theme.Body;
+        ClientSize = new Size(420, 190);
+
+        var card = new Card(Theme.Surface1);
+        card.Location = new Point(16, 16);
+        card.Size = new Size(388, 112);
+
+        var heading = new Label
+        {
+            Text = "Rename !" + currentName,
+            Font = Theme.H2,
+            ForeColor = Theme.Text,
+            BackColor = Theme.Surface2,
+            Location = new Point(14, 14),
+            Size = new Size(360, 24),
+        };
+
+        var blurb = new Label
+        {
+            Text = "The reply and the cooldown both follow the new name.",
+            Font = Theme.Small,
+            ForeColor = Theme.TextMuted,
+            BackColor = Theme.Surface2,
+            Location = new Point(14, 40),
+            Size = new Size(360, 20),
+        };
+
+        nameBox = new TextBox
+        {
+            Location = new Point(14, 68),
+            Size = new Size(200, 24),
+            Font = Theme.Body,
+            BackColor = Theme.Surface3,
+            ForeColor = Theme.Text,
+            BorderStyle = BorderStyle.FixedSingle,
+            MaxLength = 25,
+            Text = currentName,
+        };
+
+        card.Controls.Add(heading);
+        card.Controls.Add(blurb);
+        card.Controls.Add(nameBox);
+
+        var cancelButton = new KitButton("Cancel", BtnKind.Ghost, Theme.Surface1)
+        {
+            Location = new Point(16, 142),
+            Size = new Size(120, 32),
+            DialogResult = DialogResult.Cancel,
+        };
+
+        var renameButton = new KitButton("Rename", BtnKind.Primary, Theme.Surface1)
+        {
+            Location = new Point(284, 142),
+            Size = new Size(120, 32),
+            DialogResult = DialogResult.OK,
+        };
+
+        Controls.Add(card);
+        Controls.Add(cancelButton);
+        Controls.Add(renameButton);
+
+        AcceptButton = renameButton;
+        CancelButton = cancelButton;
+
+        Shown += (s, e) => { nameBox.Focus(); nameBox.SelectAll(); };
+    }
+}
+
+// A styled yes/no. Deliberately not MessageBox: there is not one anywhere in
+// this app, and a stock Windows dialog in the middle of the kit reads as
+// something else's window rather than as part of this one.
+class ConfirmDialog : Form
+{
+    public ConfirmDialog(string title, string question, string detail, string confirmText)
+    {
+        Text = title;
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        StartPosition = FormStartPosition.CenterParent;
+        MinimizeBox = false;
+        MaximizeBox = false;
+        ShowInTaskbar = false;
+        BackColor = Theme.Surface1;
+        Font = Theme.Body;
+        ClientSize = new Size(420, 190);
+
+        var card = new Card(Theme.Surface1);
+        card.Location = new Point(16, 16);
+        card.Size = new Size(388, 112);
+
+        var heading = new Label
+        {
+            Text = question,
+            Font = Theme.H2,
+            ForeColor = Theme.Text,
+            BackColor = Theme.Surface2,
+            Location = new Point(14, 14),
+            Size = new Size(360, 24),
+        };
+
+        var body = new Label
+        {
+            Text = detail,
+            Font = Theme.Small,
+            ForeColor = Theme.TextMuted,
+            BackColor = Theme.Surface2,
+            Location = new Point(14, 42),
+            Size = new Size(360, 56),
+        };
+
+        card.Controls.Add(heading);
+        card.Controls.Add(body);
+
+        var cancelButton = new KitButton("Cancel", BtnKind.Ghost, Theme.Surface1)
+        {
+            Location = new Point(16, 142),
+            Size = new Size(120, 32),
+            DialogResult = DialogResult.Cancel,
+        };
+
+        var confirmButton = new KitButton(confirmText, BtnKind.Danger, Theme.Surface1)
+        {
+            Location = new Point(264, 142),
+            Size = new Size(140, 32),
+            DialogResult = DialogResult.OK,
+        };
+
+        Controls.Add(card);
+        Controls.Add(cancelButton);
+        Controls.Add(confirmButton);
+
+        // Cancel is the default, not the destructive one. Enter should not
+        // delete anything.
+        AcceptButton = cancelButton;
+        CancelButton = cancelButton;
+    }
+}
+
+// One row of the command list, hung off the ListViewItem's Tag. The displayed
+// cooldown is "5s" or "default", so the raw value has to be carried separately
+// or editing a row would have to parse its own rendering back out.
+class CommandRow
+{
+    public string Name;
+    public string Response;
+    public string Cooldown;
+    public bool IsBuiltin;
+}
+
 class MainForm : Form
 {
     private const string AppVersion = "0.7.0";
@@ -672,6 +1021,7 @@ class MainForm : Form
 
     // Rail
     private NavItem navDashboard;
+    private NavItem navCommands;
     private NavItem navSetup;
     private TextBox obsPasswordBox;
     private KitButton obsButton;
@@ -693,9 +1043,22 @@ class MainForm : Form
     // Views
     private Panel dashboardPanel;
     private Panel setupPanel;
+    private Panel commandsPanel;
     private RichTextBox chatBox;
     private RichTextBox logBox;
     private bool chatIsEmpty = true;
+
+    // The command editor. The list is the only ListView in the app, and it is
+    // owner-drawn because a Framework ListView's column headers are painted by
+    // comctl32 and ignore BackColor entirely, which would leave one light grey
+    // strip across an otherwise dark panel.
+    private ListView commandsList;
+    private KitButton addCommandButton;
+    private KitButton editCommandButton;
+    private KitButton renameCommandButton;
+    private KitButton deleteCommandButton;
+    private KitButton refreshCommandsButton;
+    private Label commandsHintLabel;
 
     // Channel title and category, in the content column rather than the rail:
     // the rail is a fixed stack that already sets the window's minimum height,
@@ -772,8 +1135,11 @@ class MainForm : Form
         // rail readout: 4 rows at 20px plus the STATS label is 100px more
         // that the rail has to fit, and the readout is what gets eaten
         // first when it does not.
-        Height = 740;
-        MinimumSize = new Size(760, 730);
+        // Raised again from 740/730 for the Commands nav item: a NavItem is
+        // 38px plus a 2px margin, so the top group grew by 40 and the bottom
+        // group had to be given the same room back.
+        Height = 780;
+        MinimumSize = new Size(760, 770);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Theme.Surface1;
         Font = Theme.Body;
@@ -782,10 +1148,12 @@ class MainForm : Form
 
         dashboardPanel = BuildDashboardPanel();
         setupPanel = BuildSetupPanel();
+        commandsPanel = BuildCommandsPanel();
 
         var viewHost = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Surface1 };
         viewHost.Controls.Add(dashboardPanel);
         viewHost.Controls.Add(setupPanel);
+        viewHost.Controls.Add(commandsPanel);
 
         // Dock resolution runs in reverse of add order, so the fill area
         // goes in first and each edge afterwards claims the outer strip.
@@ -891,7 +1259,19 @@ class MainForm : Form
         brand.Controls.Add(brandText);
 
         navDashboard = new NavItem("Dashboard") { Width = inner, Margin = new Padding(0, 0, 0, 2) };
-        navDashboard.Click += (s, e) => { if (isReady) ShowView(false); };
+        navDashboard.Click += (s, e) => { if (isReady) ShowView(View.Dashboard); };
+
+        // Re-read on the way in, the same reasoning as Setup below: the JSON
+        // is user-editable and the bot itself never writes it, so a text
+        // editor open in another window is a real way for this list to go
+        // stale while the panel is sitting on it.
+        navCommands = new NavItem("Commands") { Width = inner, Margin = new Padding(0, 0, 0, 2) };
+        navCommands.Click += (s, e) =>
+        {
+            if (!nodeAvailable) return;
+            ShowView(View.Commands);
+            LoadCommandsInBackground();
+        };
 
         navSetup = new NavItem("Setup") { Width = inner, Margin = new Padding(0, 0, 0, 2) };
 
@@ -901,7 +1281,7 @@ class MainForm : Form
         // us). RefreshSetupState picks the view itself, so the explicit
         // ShowView has to come after it, and ShowView must never call back
         // into RefreshSetupState or the two would recurse.
-        navSetup.Click += (s, e) => { RefreshSetupState(); ShowView(true); };
+        navSetup.Click += (s, e) => { RefreshSetupState(); ShowView(View.Setup); };
 
         var obsLabel = new Label
         {
@@ -939,6 +1319,7 @@ class MainForm : Form
 
         top.Controls.Add(brand);
         top.Controls.Add(navDashboard);
+        top.Controls.Add(navCommands);
         top.Controls.Add(navSetup);
         top.Controls.Add(obsLabel);
         top.Controls.Add(obsPassHost);
@@ -1287,6 +1668,164 @@ class MainForm : Form
         return card;
     }
 
+    // The command editor. Everything the bot answers to, in one list, with the
+    // built-in commands shown alongside the custom ones: a list showing only
+    // half of them sends someone back to the JSON file to find out why !uptime
+    // is missing, which is the trip this whole view exists to save.
+    private Panel BuildCommandsPanel()
+    {
+        var panel = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Surface1, Visible = false, Padding = new Padding(16) };
+
+        var card = new Card(Theme.Surface1) { Dock = DockStyle.Fill };
+
+        var header = new Label
+        {
+            Text = "COMMANDS",
+            Font = Theme.Micro,
+            ForeColor = Theme.TextDim,
+            BackColor = Theme.Surface2,
+            AutoSize = true,
+            Location = new Point(14, 12),
+        };
+
+        commandsHintLabel = new Label
+        {
+            Text = "Reading config/commands.json...",
+            Font = Theme.Small,
+            ForeColor = Theme.TextDim,
+            BackColor = Theme.Surface2,
+            AutoSize = true,
+            Location = new Point(110, 11),
+        };
+
+        // OwnerDraw is not optional here. A Framework ListView draws its column
+        // headers through comctl32, which ignores BackColor completely, so
+        // without this the header row comes out light grey across the top of an
+        // otherwise dark card.
+        commandsList = new ListView
+        {
+            View = System.Windows.Forms.View.Details,
+            FullRowSelect = true,
+            MultiSelect = false,
+            HideSelection = false,
+            OwnerDraw = true,
+            BorderStyle = BorderStyle.FixedSingle,
+            BackColor = Theme.SurfaceInset,
+            ForeColor = Theme.Text,
+            Font = Theme.Small,
+            Location = new Point(14, 38),
+        };
+        commandsList.Columns.Add("Command", 150);
+        commandsList.Columns.Add("Reply", 470);
+        commandsList.Columns.Add("Cooldown", 90);
+        commandsList.Columns.Add("Type", 80);
+
+        commandsList.DrawColumnHeader += OnDrawCommandHeader;
+        commandsList.DrawItem += (s, e) => e.DrawDefault = false;
+        commandsList.DrawSubItem += OnDrawCommandSubItem;
+        commandsList.SelectedIndexChanged += (s, e) => SyncCommandButtons();
+        // Double-click is how everyone expects to open a row, and it saves a
+        // trip to the button for the most common action in the view.
+        commandsList.DoubleClick += OnEditCommandClick;
+
+        addCommandButton = new KitButton("Add", BtnKind.Ghost, Theme.Surface2) { Size = new Size(96, 30), Font = Theme.Small };
+        addCommandButton.Click += OnAddCommandClick;
+
+        editCommandButton = new KitButton("Edit", BtnKind.Ghost, Theme.Surface2) { Size = new Size(96, 30), Font = Theme.Small };
+        editCommandButton.Click += OnEditCommandClick;
+
+        renameCommandButton = new KitButton("Rename", BtnKind.Ghost, Theme.Surface2) { Size = new Size(96, 30), Font = Theme.Small };
+        renameCommandButton.Click += OnRenameCommandClick;
+
+        // Danger, so the one control that destroys something does not look
+        // like the three next to it that do not.
+        deleteCommandButton = new KitButton("Delete", BtnKind.Danger, Theme.Surface2) { Size = new Size(96, 30), Font = Theme.Small };
+        deleteCommandButton.Click += OnDeleteCommandClick;
+
+        refreshCommandsButton = new KitButton("Refresh", BtnKind.Ghost, Theme.Surface2) { Size = new Size(96, 30), Font = Theme.Small };
+        refreshCommandsButton.Click += (s, e) => LoadCommandsInBackground();
+
+        // Laid out by hand against the card, the same approach the channel card
+        // and the chat toolbar both use. The list takes whatever is left after
+        // the header above it and the button row below it.
+        card.SizeChanged += (s, e) =>
+        {
+            int width = Math.Max(320, card.ClientSize.Width - 28);
+            int listHeight = Math.Max(120, card.ClientSize.Height - 38 - 14 - 40);
+            commandsList.Size = new Size(width, listHeight);
+            FitCommandColumns();
+
+            int row = 38 + listHeight + 10;
+            addCommandButton.Location = new Point(14, row);
+            editCommandButton.Location = new Point(116, row);
+            renameCommandButton.Location = new Point(218, row);
+            deleteCommandButton.Location = new Point(320, row);
+            refreshCommandsButton.Location = new Point(14 + width - 96, row);
+        };
+
+        card.Controls.Add(header);
+        card.Controls.Add(commandsHintLabel);
+        card.Controls.Add(commandsList);
+        card.Controls.Add(addCommandButton);
+        card.Controls.Add(editCommandButton);
+        card.Controls.Add(renameCommandButton);
+        card.Controls.Add(deleteCommandButton);
+        card.Controls.Add(refreshCommandsButton);
+
+        panel.Controls.Add(card);
+        return panel;
+    }
+
+    // Reply absorbs whatever is left, so the columns add up to exactly the
+    // list's client width. Any shortfall shows as a block of the stock light
+    // header colour past the last column: DrawColumnHeader only fires for
+    // columns that exist, so nothing owner-draws the leftover strip.
+    //
+    // Measured against ClientSize rather than the control's width, because a
+    // vertical scrollbar takes its space out of the client area, and it is the
+    // list getting long enough to need one that would otherwise bring the
+    // white block back.
+    private void FitCommandColumns()
+    {
+        int fixedColumns = commandsList.Columns[0].Width + commandsList.Columns[2].Width + commandsList.Columns[3].Width;
+        commandsList.Columns[1].Width = Math.Max(160, commandsList.ClientSize.Width - fixedColumns);
+    }
+
+    private void OnDrawCommandHeader(object sender, DrawListViewColumnHeaderEventArgs e)
+    {
+        using (var brush = new SolidBrush(Theme.Surface3)) e.Graphics.FillRectangle(brush, e.Bounds);
+        using (var pen = new Pen(Theme.Border))
+        {
+            e.Graphics.DrawLine(pen, e.Bounds.Left, e.Bounds.Bottom - 1, e.Bounds.Right, e.Bounds.Bottom - 1);
+        }
+        var textBounds = new Rectangle(e.Bounds.X + 8, e.Bounds.Y, e.Bounds.Width - 10, e.Bounds.Height);
+        TextRenderer.DrawText(e.Graphics, e.Header.Text, Theme.Micro, textBounds, Theme.TextDim,
+            TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+    }
+
+    private void OnDrawCommandSubItem(object sender, DrawListViewSubItemEventArgs e)
+    {
+        bool selected = e.Item.Selected;
+        // Built-in rows are dimmed rather than hidden or moved to their own
+        // list, so the view answers "what does this bot respond to" in one
+        // read while still making clear which rows can be edited.
+        var row = e.Item.Tag as CommandRow;
+        bool isBuiltin = row != null && row.IsBuiltin;
+
+        Color background = selected ? Theme.Surface3 : Theme.SurfaceInset;
+        using (var brush = new SolidBrush(background)) e.Graphics.FillRectangle(brush, e.Bounds);
+
+        Color text = isBuiltin ? Theme.TextDim : Theme.Text;
+        if (selected) text = isBuiltin ? Theme.TextMuted : Theme.Text;
+        // The command name carries the accent so the eye lands on the column
+        // that identifies the row.
+        if (e.ColumnIndex == 0 && !isBuiltin) text = Theme.Accent;
+
+        var bounds = new Rectangle(e.Bounds.X + 8, e.Bounds.Y, e.Bounds.Width - 10, e.Bounds.Height);
+        TextRenderer.DrawText(e.Graphics, e.SubItem.Text, Theme.Small, bounds, text,
+            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+    }
+
     private Card BuildFeedCard(string headerText, out RichTextBox box, bool isChat, string placeholder, Control toolbar)
     {
         var card = new Card(Theme.Surface1) { Dock = DockStyle.Fill };
@@ -1597,13 +2136,24 @@ class MainForm : Form
 
     // ---------- Readiness ----------
 
-    private void ShowView(bool setup)
+    private enum View { Dashboard, Commands, Setup }
+
+    private void ShowView(View view)
     {
-        setupPanel.Visible = setup;
-        dashboardPanel.Visible = !setup;
-        navSetup.Active = setup;
-        navDashboard.Active = !setup;
+        dashboardPanel.Visible = view == View.Dashboard;
+        commandsPanel.Visible = view == View.Commands;
+        setupPanel.Visible = view == View.Setup;
+
+        navDashboard.Active = view == View.Dashboard;
+        navCommands.Active = view == View.Commands;
+        navSetup.Active = view == View.Setup;
+
         navDashboard.Enabled = isReady;
+        // Gated on node rather than on isReady, unlike the dashboard. Editing
+        // commands needs the scripts to run and nothing else; it does not need
+        // a connected Twitch account, and writing a few replies before signing
+        // in is a perfectly reasonable thing to want to do.
+        navCommands.Enabled = nodeAvailable;
 
         // Gated on readiness only, never on which view is showing: the bot
         // keeps running while you are looking at Setup, so disabling this
@@ -1648,7 +2198,10 @@ class MainForm : Form
         SetOverlayValue(botProcess == null ? "none" : overlayValue.Text, false);
 
         isReady = nodeAvailable && hasModules && hasAccount;
-        ShowView(!isReady);
+        // Never bounces someone out of the Commands view: this runs on the way
+        // into Setup and on startup, and both of those already decide where to
+        // land. Only the ready/not-ready choice belongs here.
+        if (!commandsPanel.Visible) ShowView(isReady ? View.Dashboard : View.Setup);
 
         if (isReady && !hasEnteredDashboard)
         {
@@ -2356,6 +2909,240 @@ class MainForm : Form
         channelHintLabel.ForeColor = Theme.TextDim;
     }
 
+    // ---------- The command editor ----------
+
+    // Reads through scripts/readCommands.js rather than parsing the JSON here.
+    // The panel is compiled against five framework references and none of them
+    // is a JSON library, so the alternative is a hand-rolled parser owning
+    // every escaping bug in it. Node already has one that is correct.
+    //
+    // Captures stdout rather than going through RunNodeScriptOneShot, which
+    // streams into the activity log: this runs on every edit, and a dozen
+    // machine-readable lines in the log each time is noise.
+    private void LoadCommandsInBackground()
+    {
+        if (!nodeAvailable) return;
+
+        commandsHintLabel.Text = "Reading config/commands.json...";
+        commandsHintLabel.ForeColor = Theme.TextDim;
+
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = ResolveNodePath(),
+                Arguments = "\"" + Path.Combine(rootDir, "scripts", "readCommands.js") + "\"",
+                WorkingDirectory = rootDir,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            };
+
+            var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
+            var output = new StringBuilder();
+            proc.OutputDataReceived += (s, ev) => { if (ev.Data != null) output.AppendLine(ev.Data); };
+            proc.Exited += (s, ev) =>
+            {
+                string text = output.ToString();
+                BeginInvoke(new Action(() =>
+                {
+                    OnCommandsLoaded(text);
+                    proc.Dispose();
+                }));
+            };
+
+            proc.Start();
+            proc.BeginOutputReadLine();
+        }
+        catch (Exception ex)
+        {
+            commandsHintLabel.Text = "Could not read the command list";
+            commandsHintLabel.ForeColor = Theme.Danger;
+            AppendLog("Could not read the command list: " + ex.Message);
+        }
+    }
+
+    private const string CommandPrefix = "@@CMD@@|";
+
+    private void OnCommandsLoaded(string output)
+    {
+        var failure = Regex.Match(output, @"COMMANDS_READ_FAILED=(.*)$", RegexOptions.Multiline);
+        if (failure.Success)
+        {
+            commandsHintLabel.Text = "Could not read the command list";
+            commandsHintLabel.ForeColor = Theme.Danger;
+            AppendLog("Could not read the command list: " + failure.Groups[1].Value.Trim());
+            return;
+        }
+
+        // Remembered across the reload that follows every edit, so saving a
+        // command does not throw the selection back to the top of the list.
+        string previous = SelectedCommandName();
+
+        commandsList.BeginUpdate();
+        commandsList.Items.Clear();
+
+        int custom = 0;
+        foreach (string raw in output.Split('\n'))
+        {
+            string line = raw.TrimEnd('\r');
+            if (!line.StartsWith(CommandPrefix, StringComparison.Ordinal)) continue;
+
+            string[] parts = line.Split('|');
+            if (parts.Length < 5) continue;
+
+            var row = new CommandRow
+            {
+                Name = DecodeBase64(parts[1]),
+                Response = DecodeBase64(parts[2]),
+                Cooldown = parts[3],
+                IsBuiltin = parts[4] == "1",
+            };
+            if (!row.IsBuiltin) custom++;
+
+            var item = new ListViewItem("!" + row.Name) { Tag = row };
+            item.SubItems.Add(row.Response);
+            item.SubItems.Add(row.Cooldown.Length > 0 ? row.Cooldown + "s" : "default");
+            item.SubItems.Add(row.IsBuiltin ? "Built in" : "Custom");
+            commandsList.Items.Add(item);
+
+            if (row.Name == previous) item.Selected = true;
+        }
+
+        commandsList.EndUpdate();
+        // Re-fit after the rows land: enough commands to need a vertical
+        // scrollbar narrows the client area, and SizeChanged does not fire for
+        // a scrollbar appearing.
+        FitCommandColumns();
+        SyncCommandButtons();
+
+        commandsHintLabel.Text = custom + (custom == 1 ? " custom command" : " custom commands")
+            + ", plus the built-ins. Changes reach the bot straight away.";
+        commandsHintLabel.ForeColor = Theme.TextDim;
+    }
+
+    private CommandRow SelectedCommand()
+    {
+        if (commandsList.SelectedItems.Count == 0) return null;
+        return commandsList.SelectedItems[0].Tag as CommandRow;
+    }
+
+    private string SelectedCommandName()
+    {
+        var row = SelectedCommand();
+        return row == null ? null : row.Name;
+    }
+
+    // Edit stays live for a builtin, because its cooldown is editable even
+    // though its reply is not. Rename and Delete do not: there is nothing
+    // sensible either could do to a command that lives in the bot's code.
+    private void SyncCommandButtons()
+    {
+        var row = SelectedCommand();
+        bool haveRow = row != null;
+        bool isCustom = haveRow && !row.IsBuiltin;
+
+        editCommandButton.Enabled = haveRow;
+        renameCommandButton.Enabled = isCustom;
+        deleteCommandButton.Enabled = isCustom;
+    }
+
+    private void OnAddCommandClick(object sender, EventArgs e)
+    {
+        using (var dialog = new CommandDialog("Add a command", "", "", "", false))
+        {
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            RunCommandScript(new Dictionary<string, string>
+            {
+                { "COMMAND_ACTION", "save" },
+                { "COMMAND_NAME", dialog.CommandName },
+                { "COMMAND_RESPONSE", dialog.Response },
+                { "COMMAND_COOLDOWN", dialog.Cooldown },
+            }, addCommandButton);
+        }
+    }
+
+    private void OnEditCommandClick(object sender, EventArgs e)
+    {
+        var row = SelectedCommand();
+        if (row == null) return;
+
+        string title = row.IsBuiltin ? "Cooldown for !" + row.Name : "Edit !" + row.Name;
+        using (var dialog = new CommandDialog(title, row.Name, row.Response, row.Cooldown, row.IsBuiltin))
+        {
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+            // A builtin has no entry in commands.json to save, so editing one
+            // is only ever a cooldown change. Sending it through the save
+            // action would be rejected by the script's own shadow guard, and
+            // rightly so.
+            if (row.IsBuiltin)
+            {
+                RunCommandScript(new Dictionary<string, string>
+                {
+                    { "COMMAND_ACTION", "cooldown" },
+                    { "COMMAND_NAME", row.Name },
+                    { "COMMAND_COOLDOWN", dialog.Cooldown },
+                }, editCommandButton);
+                return;
+            }
+
+            RunCommandScript(new Dictionary<string, string>
+            {
+                { "COMMAND_ACTION", "save" },
+                { "COMMAND_NAME", row.Name },
+                { "COMMAND_RESPONSE", dialog.Response },
+                { "COMMAND_COOLDOWN", dialog.Cooldown },
+            }, editCommandButton);
+        }
+    }
+
+    private void OnRenameCommandClick(object sender, EventArgs e)
+    {
+        var row = SelectedCommand();
+        if (row == null || row.IsBuiltin) return;
+
+        using (var dialog = new RenameDialog(row.Name))
+        {
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            RunCommandScript(new Dictionary<string, string>
+            {
+                { "COMMAND_ACTION", "rename" },
+                { "COMMAND_NAME", row.Name },
+                { "COMMAND_NEW_NAME", dialog.NewName },
+            }, renameCommandButton);
+        }
+    }
+
+    private void OnDeleteCommandClick(object sender, EventArgs e)
+    {
+        var row = SelectedCommand();
+        if (row == null || row.IsBuiltin) return;
+
+        using (var dialog = new ConfirmDialog(
+            "Delete a command",
+            "Delete !" + row.Name + "?",
+            "Its reply and its cooldown both go with it. Chat stops getting an answer to !" + row.Name + " straight away.",
+            "Delete !" + row.Name))
+        {
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            RunCommandScript(new Dictionary<string, string>
+            {
+                { "COMMAND_ACTION", "delete" },
+                { "COMMAND_NAME", row.Name },
+            }, deleteCommandButton);
+        }
+    }
+
+    // Every edit reloads the list afterwards, whether it worked or not. On
+    // success that shows the change; on failure it puts back what is actually
+    // on disk, rather than leaving the list showing an edit that was rejected.
+    private void RunCommandScript(Dictionary<string, string> env, Button triggerButton)
+    {
+        RunNodeScriptOneShot("scripts/setCommand.js", env, triggerButton, LoadCommandsInBackground);
+    }
+
     private void OnReportIssueClick(object sender, EventArgs e)
     {
         using (var dialog = new IssueDialog())
@@ -2719,7 +3506,10 @@ class MainForm : Form
     // for one-shot actions (OBS setup, updating) as opposed to the
     // long-running bot process. Disables the triggering button while it
     // runs so it can't be double-clicked mid-flight.
-    private void RunNodeScriptOneShot(string relativeScriptPath, Dictionary<string, string> extraEnv, Button triggerButton)
+    // onFinished runs on the UI thread once the script exits, whatever its
+    // exit code. Added for the command editor, which has to put the list back
+    // in step with the file after every edit including a rejected one.
+    private void RunNodeScriptOneShot(string relativeScriptPath, Dictionary<string, string> extraEnv, Button triggerButton, Action onFinished = null)
     {
         triggerButton.Enabled = false;
         AppendLog("--- Running " + relativeScriptPath + " ---");
@@ -2751,6 +3541,7 @@ class MainForm : Form
                     AppendLog("--- " + relativeScriptPath + " finished (exit code " + proc.ExitCode + ") ---");
                     triggerButton.Enabled = true;
                     proc.Dispose();
+                    if (onFinished != null) onFinished();
                 }));
             };
 

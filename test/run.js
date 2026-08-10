@@ -456,6 +456,267 @@ async function checkUpdateChannelInfoNeedsCredentials() {
   }
 }
 
+// ---------- The command editor (scripts/setCommand.js, scripts/readCommands.js) ----------
+
+// Every one of these runs against the scratch config the suite already points
+// configStore at, so a save here is a save the running store can see. That is
+// what makes the hot-reload check below possible.
+function runSetCommand(vars) {
+  return spawnSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'setCommand.js')], {
+    encoding: 'utf8',
+    env: Object.assign({}, process.env, { TWITCH_BOT_CONFIG_DIR: path.join(scratchDir, 'config') }, vars),
+  });
+}
+
+function readScratch(file) {
+  return fs.readFileSync(path.join(scratchDir, 'config', file), 'utf8');
+}
+
+// A rejected edit must not be a partial edit. Every case here is one someone
+// can reach from the panel's dialog, and none of them may leave a half-written
+// file behind.
+function checkSetCommandRejections() {
+  const commandsBefore = readScratch('commands.json');
+  const cooldownsBefore = readScratch('cooldowns.json');
+
+  const cases = [
+    // handle() checks BUILTINS first, so a custom !joke would be saved and
+    // then silently never fire. This is the whole reason the guard exists.
+    ['a name that shadows a builtin', { COMMAND_ACTION: 'save', COMMAND_NAME: 'joke', COMMAND_RESPONSE: 'x' }],
+    ['a name with a space', { COMMAND_ACTION: 'save', COMMAND_NAME: 'my cmd', COMMAND_RESPONSE: 'x' }],
+    ['a blank response', { COMMAND_ACTION: 'save', COMMAND_NAME: 'ok', COMMAND_RESPONSE: '   ' }],
+    ['a response with a line break', { COMMAND_ACTION: 'save', COMMAND_NAME: 'ok', COMMAND_RESPONSE: 'one\ntwo' }],
+    ['a response over Twitch\'s cap', { COMMAND_ACTION: 'save', COMMAND_NAME: 'ok', COMMAND_RESPONSE: 'x'.repeat(501) }],
+    ['a non-numeric cooldown', { COMMAND_ACTION: 'save', COMMAND_NAME: 'ok', COMMAND_RESPONSE: 'x', COMMAND_COOLDOWN: 'abc' }],
+    ['deleting a command that is not there', { COMMAND_ACTION: 'delete', COMMAND_NAME: 'nosuchcommand' }],
+    ['renaming onto an existing name', { COMMAND_ACTION: 'rename', COMMAND_NAME: 'disc', COMMAND_NEW_NAME: 'discord' }],
+    ['an unknown action', { COMMAND_ACTION: 'frobnicate', COMMAND_NAME: 'x' }],
+  ];
+
+  for (const [label, vars] of cases) {
+    const res = runSetCommand(vars);
+    assert.notStrictEqual(res.status, 0, `${label} should exit non-zero`);
+    assert.ok(res.stderr.trim().length > 0, `${label} should say why on stderr`);
+    assert.ok(!/_OK=/.test(res.stdout), `${label} must not report success`);
+  }
+
+  assert.strictEqual(readScratch('commands.json'), commandsBefore, 'a rejected edit must not touch commands.json');
+  assert.strictEqual(readScratch('cooldowns.json'), cooldownsBefore, 'a rejected edit must not touch cooldowns.json');
+  console.log('setCommand.js rejects bad edits without writing: ok');
+}
+
+// The full add, rename, delete round trip, including the two things that are
+// easy to get wrong: the cooldown following a rename, and a rename not
+// reordering the whole file.
+function checkSetCommandRoundTrip() {
+  let res = runSetCommand({
+    COMMAND_ACTION: 'save',
+    COMMAND_NAME: 'roundtrip',
+    COMMAND_RESPONSE: 'A response with a | pipe in it',
+    COMMAND_COOLDOWN: '42',
+  });
+  assert.strictEqual(res.status, 0, `save failed: ${res.stderr}`);
+  assert.match(res.stdout, /COMMAND_SAVE_OK=roundtrip/);
+
+  let commands = JSON.parse(readScratch('commands.json'));
+  assert.strictEqual(commands.roundtrip, 'A response with a | pipe in it');
+  assert.strictEqual(JSON.parse(readScratch('cooldowns.json')).perCommand.roundtrip, 42);
+
+  const orderBefore = Object.keys(commands);
+
+  res = runSetCommand({ COMMAND_ACTION: 'rename', COMMAND_NAME: 'roundtrip', COMMAND_NEW_NAME: 'renamed' });
+  assert.strictEqual(res.status, 0, `rename failed: ${res.stderr}`);
+
+  commands = JSON.parse(readScratch('commands.json'));
+  assert.ok(!('roundtrip' in commands), 'the old name should be gone');
+  assert.strictEqual(commands.renamed, 'A response with a | pipe in it');
+  assert.deepStrictEqual(
+    Object.keys(commands),
+    orderBefore.map((k) => (k === 'roundtrip' ? 'renamed' : k)),
+    'a rename should keep the command in place, not move it to the end'
+  );
+
+  const cooldowns = JSON.parse(readScratch('cooldowns.json')).perCommand;
+  assert.strictEqual(cooldowns.renamed, 42, 'the cooldown must follow the rename');
+  assert.ok(!('roundtrip' in cooldowns), 'the old cooldown key must not be left behind');
+
+  res = runSetCommand({ COMMAND_ACTION: 'delete', COMMAND_NAME: 'renamed' });
+  assert.strictEqual(res.status, 0, `delete failed: ${res.stderr}`);
+  assert.ok(!('renamed' in JSON.parse(readScratch('commands.json'))), 'the command should be gone');
+  assert.ok(
+    !('renamed' in JSON.parse(readScratch('cooldowns.json')).perCommand),
+    'deleting a command should take its cooldown with it'
+  );
+
+  // A capital cannot be matched by handle(), which lowercases first, so the
+  // script corrects it rather than saving a command that can never fire.
+  res = runSetCommand({ COMMAND_ACTION: 'save', COMMAND_NAME: 'MixedCase', COMMAND_RESPONSE: 'x' });
+  assert.strictEqual(res.status, 0, `save failed: ${res.stderr}`);
+  assert.match(res.stdout, /COMMAND_SAVE_OK=mixedcase/, 'a name should be lowercased, not rejected');
+  assert.match(res.stdout, /always lower case/, 'and the correction should be stated, not silent');
+  runSetCommand({ COMMAND_ACTION: 'delete', COMMAND_NAME: 'mixedcase' });
+
+  console.log('setCommand.js add, rename and delete round trip: ok');
+}
+
+// git checks these files out as CRLF here (core.autocrlf), so a writer that
+// emits LF leaves every edited config looking modified with an empty diff.
+// Preserving what the file already uses keeps the working tree honest.
+function checkCommandWritePreservesLineEndings() {
+  const target = path.join(scratchDir, 'config', 'commands.json');
+
+  for (const eol of ['\r\n', '\n']) {
+    const seeded = JSON.parse(fs.readFileSync(target, 'utf8'));
+    fs.writeFileSync(target, `${JSON.stringify(seeded, null, 2)}\n`.replace(/\n/g, eol === '\n' ? '\n' : '\r\n'));
+
+    const res = runSetCommand({ COMMAND_ACTION: 'save', COMMAND_NAME: 'eoltest', COMMAND_RESPONSE: 'x' });
+    assert.strictEqual(res.status, 0, `save failed: ${res.stderr}`);
+
+    const written = fs.readFileSync(target, 'utf8');
+    const hasCrlf = /\r\n/.test(written);
+    assert.strictEqual(hasCrlf, eol === '\r\n', `a ${eol === '\r\n' ? 'CRLF' : 'LF'} file should stay that way`);
+    if (eol === '\n') assert.ok(!/\r/.test(written), 'an LF file must not gain any CR bytes');
+
+    runSetCommand({ COMMAND_ACTION: 'delete', COMMAND_NAME: 'eoltest' });
+  }
+
+  console.log('setCommand.js keeps each config file\'s existing line endings: ok');
+}
+
+// A builtin's reply lives in code, but its cooldown does not: checkCooldown()
+// applies perCommand to builtins exactly as it does to custom commands, and
+// !so ships with one. Editing that from the panel needs its own action,
+// because routing it through `save` would hit the shadow guard.
+function checkBuiltinCooldownEditing() {
+  const original = JSON.parse(readScratch('cooldowns.json')).perCommand.so;
+
+  let res = runSetCommand({ COMMAND_ACTION: 'cooldown', COMMAND_NAME: 'so', COMMAND_COOLDOWN: '25' });
+  assert.strictEqual(res.status, 0, `cooldown failed: ${res.stderr}`);
+  assert.match(res.stdout, /COMMAND_COOLDOWN_OK=so/);
+  assert.strictEqual(JSON.parse(readScratch('cooldowns.json')).perCommand.so, 25);
+
+  // An empty value is how the panel says "no override", so it has to clear
+  // the entry rather than be treated as an absent variable.
+  res = runSetCommand({ COMMAND_ACTION: 'cooldown', COMMAND_NAME: 'so', COMMAND_COOLDOWN: '' });
+  assert.strictEqual(res.status, 0, `clearing failed: ${res.stderr}`);
+  assert.ok(!('so' in JSON.parse(readScratch('cooldowns.json')).perCommand), 'an empty cooldown should clear the override');
+
+  res = runSetCommand({ COMMAND_ACTION: 'cooldown', COMMAND_NAME: 'nosuchcommand', COMMAND_COOLDOWN: '5' });
+  assert.notStrictEqual(res.status, 0, 'a cooldown for a command that does not exist should be refused');
+
+  // Put !so back the way the shipped config has it, so a later test reading
+  // this file is not looking at something this one moved.
+  runSetCommand({ COMMAND_ACTION: 'cooldown', COMMAND_NAME: 'so', COMMAND_COOLDOWN: String(original) });
+  assert.strictEqual(JSON.parse(readScratch('cooldowns.json')).perCommand.so, original);
+
+  console.log('setCommand.js edits a builtin\'s cooldown without touching commands.json: ok');
+}
+
+// The panel parses this output, so its shape is a contract. Free-text fields
+// are base64 for the same reason chatEmit.js does it: a response can contain
+// the delimiter.
+function checkReadCommandsOutput() {
+  const res = spawnSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'readCommands.js')], {
+    encoding: 'utf8',
+    env: Object.assign({}, process.env, { TWITCH_BOT_CONFIG_DIR: path.join(scratchDir, 'config') }),
+  });
+  assert.strictEqual(res.status, 0, `readCommands.js failed: ${res.stderr}`);
+
+  const lines = res.stdout.split('\n').filter((l) => l.startsWith('@@CMD@@|'));
+  const parsed = lines.map((line) => {
+    const parts = line.split('|');
+    return {
+      name: Buffer.from(parts[1], 'base64').toString('utf8'),
+      response: Buffer.from(parts[2], 'base64').toString('utf8'),
+      cooldown: parts[3],
+      builtin: parts[4] === '1',
+    };
+  });
+
+  const count = res.stdout.match(/COMMANDS_READ_OK=(\d+)/);
+  assert.ok(count, 'readCommands.js must print the count the panel waits for');
+  assert.strictEqual(parsed.length, Number(count[1]), 'the count must match the lines emitted');
+
+  // A list showing only half the commands that exist is the trip to the JSON
+  // file this feature is meant to save.
+  for (const name of Object.keys(commands.BUILTINS)) {
+    const row = parsed.find((p) => p.name === name);
+    assert.ok(row, `builtin !${name} should be listed`);
+    assert.ok(row.builtin, `!${name} should be marked as a builtin`);
+  }
+
+  const hello = parsed.find((p) => p.name === 'hello');
+  assert.ok(hello && !hello.builtin, 'custom commands should be listed and not marked builtin');
+  assert.strictEqual(hello.response, 'Hey there, welcome to the stream!');
+
+  const so = parsed.find((p) => p.name === 'so');
+  assert.strictEqual(so.cooldown, '10', 'a builtin with a per-command cooldown should carry it');
+
+  console.log('readCommands.js output round-trips through base64: ok');
+}
+
+// The write must stay a plain overwrite. configStore watches each config file
+// with fs.watch, and renaming over a watched file on Windows drops the watch:
+// live reload would die silently and stay dead until the bot restarted. This
+// is the one mistake that would make the editor look like it works and then
+// quietly stop the bot seeing any of it.
+function checkSetCommandWritesInPlace() {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'setCommand.js'), 'utf8');
+  // Comments are stripped first, since the reason this rule exists is written
+  // out in the file's header and would otherwise trip its own check. Matched
+  // on the filesystem calls specifically, not on the word "rename": the script
+  // has a rename *action*, which is a different thing entirely.
+  const code = source.replace(/^\s*\/\/.*$/gm, '');
+  for (const call of ['fs.rename', 'renameSync', 'copyFileSync']) {
+    assert.ok(
+      !code.includes(call),
+      `setCommand.js must overwrite config files in place, but it calls ${call}`
+    );
+  }
+  assert.ok(code.includes('writeFileSync'), 'setCommand.js should write with writeFileSync');
+  console.log('setCommand.js writes config in place, never via rename: ok');
+}
+
+// The claim the whole Commands view rests on: an edit reaches a running bot
+// with no restart. configStore is already watching the scratch config, so this
+// is the same watcher and the same debounce the bot runs with.
+async function checkCommandHotReload() {
+  const reloaded = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('commands.json changed but configStore never reloaded it')), 5000);
+    configStore.onChange('commands', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+
+  const res = runSetCommand({
+    COMMAND_ACTION: 'save',
+    COMMAND_NAME: 'hotreload',
+    COMMAND_RESPONSE: 'Picked up without a restart.',
+  });
+  assert.strictEqual(res.status, 0, `save failed: ${res.stderr}`);
+
+  await reloaded;
+
+  let replied = '';
+  const handled = await commands.handle(
+    { text: '!hotreload', username: 'reloadTester', isMod: true, isBroadcaster: false },
+    { reply: (msg) => { replied = msg; } }
+  );
+  assert.strictEqual(handled, true, 'a command added while running should be answered');
+  assert.strictEqual(replied, 'Picked up without a restart.');
+
+  runSetCommand({ COMMAND_ACTION: 'delete', COMMAND_NAME: 'hotreload' });
+
+  // These are the only tests that write config, so they are the only ones that
+  // leave a watcher debounce armed. It is 150ms, and the suite deletes the
+  // scratch directory on the way out, so without settling here the timer fires
+  // against a directory that is gone and prints an ENOENT after the run has
+  // already reported success.
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  console.log('a command saved from the panel reaches a running bot with no restart: ok');
+}
+
 async function run() {
   checkBatchFileLineEndings();
 
@@ -626,6 +887,15 @@ async function run() {
   checkAuthScopes();
   checkSetChannelInfoRejectsEmpty();
   await checkUpdateChannelInfoNeedsCredentials();
+
+  // --- The command editor ---
+  checkSetCommandWritesInPlace();
+  checkSetCommandRejections();
+  checkSetCommandRoundTrip();
+  checkBuiltinCooldownEditing();
+  checkCommandWritePreservesLineEndings();
+  checkReadCommandsOutput();
+  await checkCommandHotReload();
 
   configStore.close();
   fs.rmSync(scratchDir, { recursive: true, force: true });

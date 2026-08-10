@@ -14,6 +14,8 @@
     "channel-read": "node scripts/readChannelInfo.js",
     "channel-set": "node scripts/setChannelInfo.js",
     "channel-stats": "node scripts/readChannelStats.js",
+    "commands-read": "node scripts/readCommands.js",
+    "commands-set": "node scripts/setCommand.js",
     "start": "node index.js",
     "test": "node test/run.js",
     "twitch-auth": "node scripts/getTwitchToken.js"

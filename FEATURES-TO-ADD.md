@@ -844,6 +844,7 @@ Write the whole file with a single `File.WriteAllText`, and expect the reload
 listener to fire once per save.
 
 ### 43. Command editor
+**BUILT AND VERIFIED** (2026-08-10)
 *a few days*
 **Does:** Add, edit, rename and delete custom commands from the panel, with each
 command's cooldown edited alongside it.
@@ -860,6 +861,91 @@ a custom command that shadows a builtin at edit time as well: `handle()` checks
 never fires.
 **Why first in the phase:** it is the item this phase exists for, and items 44
 to 46 are largely the same editor pointed at other files.
+
+**As built.** A **Commands** item in the rail's nav opening a third view, beside
+Dashboard and Setup, holding one list of every command the bot answers to and a
+row of Add, Edit, Rename, Delete and Refresh beneath it. Built-ins are listed
+dimmed with their replies locked and **their cooldowns still editable**, since
+`checkCooldown()` applies `perCommand` to them exactly as it does to custom
+commands, and `!so` ships with 10 seconds on it.
+
+**The node scripts own the JSON, and the panel never parses or writes it.**
+`scripts/readCommands.js` prints one `@@CMD@@|` line per command with the
+free-text fields base64-encoded, the same shape and the same reason as
+`src/chatEmit.js`: a reply can contain the delimiter.
+`scripts/setCommand.js` takes `COMMAND_ACTION` of `save`, `rename`, `delete` or
+`cooldown` and does the writing. The panel is compiled against five framework
+assemblies and none of them is a JSON library, so the alternative was adding a
+reference and changing the documented `csc` line, or hand-rolling a parser and
+owning every escaping bug in it. It is also the only shape that can be tested,
+which is the same reasoning that put items 9 and 10 in scripts: this feature is
+almost entirely text fields, and text fields cannot be driven by any automation
+tried on this project.
+
+**All validation is in the script, so all of it is covered by `npm test`.**
+Names are lowercased and must match `^[a-z0-9][a-z0-9_-]*$`, because `handle()`
+lowercases and splits on whitespace before looking a command up, so a capital or
+a space produces a command that can never fire. A capital is corrected rather
+than refused, and the correction is stated rather than silent. A name that
+shadows a builtin is refused outright, closing the trap this document warned
+about. Replies are single-line and capped at Twitch's own 500. Renaming carries
+the cooldown across and rebuilds the map in order, so it does not look like a
+reordering of the whole file in a diff.
+
+**Two things worth not rediscovering.**
+
+The write must stay a plain `writeFileSync` over the existing file. An atomic
+write (temp file, rename over the target) is the usual correct answer and is
+wrong here: `fs.watch` is bound to the file it was handed, and renaming over it
+on Windows drops the watch, so live reload would die silently and stay dead
+until the bot restarted. A test asserts the script contains no `fs.rename`,
+`renameSync` or `copyFileSync`.
+
+The writer also **preserves each file's existing line endings**. It first wrote
+LF, and since git here has `core.autocrlf` on and checks these files out as
+CRLF, every edit from the panel left a config file showing as modified with a
+completely empty diff. That is the kind of noise that trains someone to stop
+reading `git status`. A test covers both directions.
+
+**The ListView is owner-drawn**, and has to be: a Framework `ListView` draws its
+column headers through comctl32, which ignores `BackColor` entirely. Without
+`OwnerDraw` the header is a light grey strip across the top of a dark card, and
+the region *past the last column* is a second one, which is why `Reply` is
+sized to absorb the exact remaining client width rather than a fixed margin.
+Measured against `ClientSize` and re-fitted after the rows load, because a
+vertical scrollbar takes its width out of the client area and `SizeChanged` does
+not fire when one appears. This is the first `ListView` in the app and sets the
+pattern items 44 and 45 should copy.
+
+**The rail height trap bit again and was handled:** `Height` 740 to 780 and
+`MinimumSize` 730 to 770, since a `NavItem` is 38px plus a 2px margin and the
+rail is a fixed stack that cannot reflow. `ShowView(bool)` became
+`ShowView(View)` over a three-value enum, three call sites.
+
+**Verified:**
+- `npm test`, with seven new checks: the in-place write guard, every rejection
+  path leaving both files byte-identical, the add/rename/delete round trip
+  including cooldown movement and key order, builtin cooldown editing, line
+  ending preservation in both directions, the base64 round trip of
+  `readCommands.js`, and hot reload.
+- **Hot reload proven, not argued.** The test registers a `configStore`
+  listener, runs `setCommand.js`, waits for the reload to fire, and then asserts
+  `handle()` answers the new command. `[config] Reloaded commands.json` appears
+  in the run.
+- **Driven end to end through the real panel**, not just the scripts. A
+  throwaway command was added by script, the list was reloaded from the nav
+  item, the row was selected, Delete was pressed, the confirmation was accepted,
+  and `config/commands.json` came back byte-identical to its committed state.
+  Worth recording: a `SysListView32` **does** respond to a synthetic
+  `WM_LBUTTONDOWN`/`WM_LBUTTONUP` pair, unlike the owner-drawn `KitCheck`, so
+  list selection is automatable even though the text fields are not.
+- The dashboard was re-screenshotted after the height change to confirm the rail
+  readout is not being eaten from the top.
+
+**Not verified:** typing into the dialog's own text fields, which is the
+documented automation limit on this project. The dialogs were opened and
+screenshotted, and the values they collect are passed straight to the script,
+which is covered.
 
 ### 44. Joke list editor
 *hours*

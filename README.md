@@ -157,7 +157,7 @@ you actually watch.
 
 The **left rail** holds:
 
-- **Dashboard** and **Setup** navigation.
+- **Dashboard**, **Commands** and **Setup** navigation.
 - **OBS**: your OBS WebSocket password (Tools > WebSocket Server Settings >
   Show Connect Info), which is optional now that both OBS actions fall back to
   the password OBS itself has saved. Alongside it, **Add Browser Source**,
@@ -394,7 +394,65 @@ from a broken lookup, and to check a scope really came back after a Reconnect.
 Unlike `channel-read` this one does need scopes, so it is also a real test of
 the token: followers, subscribers and chatters each need their own.
 
-Add your own in `config/commands.json`:
+## Editing commands from the panel
+
+The **Commands** item in the left rail opens an editor for everything the bot
+answers to, so adding a command or fixing a typo in one does not mean opening a
+JSON file mid-stream.
+
+The list shows the built-in commands alongside your own. Built-ins are dimmed
+and their replies are locked, because those live in the bot's code, but their
+**cooldowns are editable** like any other, which is how `!so` ships with 10
+seconds on it. Your own commands are listed underneath with the reply and
+cooldown that are actually in the file.
+
+- **Add** and **Edit** open the same dialog: the command name, the reply, and
+  an optional cooldown. Leave the cooldown empty to fall back to
+  `defaultSeconds`.
+- **Rename** is separate from Edit on purpose, because renaming moves the
+  cooldown across with the command rather than leaving it keyed to a name that
+  no longer exists.
+- **Delete** asks first, then removes the reply and the cooldown together.
+- **Refresh** re-reads the files, for when you have edited them by hand in
+  another window.
+
+**Edits reach a running bot straight away.** The bot watches `config/` and
+reloads on change, and it re-reads the command list on every chat message, so a
+command saved here answers the very next time someone types it. There is
+nothing to restart.
+
+A few things the editor will not let you do, each because the bot could not
+honour it:
+
+- **Names are lower case with no spaces.** The bot lowercases a command and
+  splits the message on whitespace before looking it up, so `MyCmd` or
+  `my cmd` could never match. A capital is corrected rather than rejected, and
+  the panel tells you it did.
+- **A name that is already a built-in is refused.** Built-ins are checked
+  first, so a custom `!joke` would sit in the file and never once fire.
+- **Replies are a single line, 500 characters at most.** That is Twitch's own
+  message cap, and a chat message cannot carry a line break.
+
+You can drive the same thing from a terminal, which is also how these paths get
+tested, since the panel's text fields cannot be automated:
+
+```bash
+npm run commands-read
+```
+
+That prints every command, with the free-text fields base64-encoded so a reply
+containing the `|` delimiter cannot corrupt the output. To write, in PowerShell:
+
+```bash
+$env:COMMAND_ACTION="save"; $env:COMMAND_NAME="discord"; $env:COMMAND_RESPONSE="Join the Discord: https://discord.gg/your-invite"; npm run commands-set
+```
+
+`COMMAND_ACTION` takes `save`, `rename` (with `COMMAND_NEW_NAME`), `delete`, or
+`cooldown` for changing a built-in's cooldown on its own. `COMMAND_COOLDOWN`
+sets the per-command cooldown on a save, and an empty value clears it.
+
+Editing `config/commands.json` by hand still works exactly as before:
+
 ```json
 {
   "hello": "Hey there, welcome to the stream!",
@@ -416,6 +474,11 @@ Applies per user, per command (mods/broadcaster always bypass it). A
 command on cooldown is silently ignored, with no reply and no alert, rather
 than posting a "you're on cooldown" message, which would just be its own kind
 of spam. Hot-reloads like everything else.
+
+`perCommand` covers built-in commands as well as your own, which is why `!so`
+ships with 10 seconds on it. The panel's **Commands** editor writes this file
+alongside `commands.json`, so per-command cooldowns are usually easier to set
+there than by hand.
 
 ## Auto-messages / timers
 
@@ -599,6 +662,12 @@ upgrade in place rather than pile up a second entry in Add/Remove Programs.
   the installer pack), the OBS WebSocket integration, and
   `connectAccount.js` (the non-interactive sign-in step the control panel's
   setup screen runs).
+- `scripts/readCommands.js` and `scripts/setCommand.js`: the read and write
+  halves of the panel's Commands editor. The JSON work lives here rather than
+  in the panel's C# because the control panel is compiled against five
+  framework assemblies and none of them is a JSON library, and because a
+  script can be tested from a terminal where the panel's text fields cannot be
+  driven at all.
 - `bin/`: the compiled binaries and the batch entry points, kept out of the
   project root so the root stays readable. Note that the control panel
   derives the project root as its own parent directory, so it has to sit
