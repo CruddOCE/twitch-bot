@@ -849,6 +849,30 @@ async function run() {
   assert.strictEqual(result, null);
   console.log('allowlisted link -> clean: ok');
 
+  // A domain that merely contains the allowlisted string must not pass --
+  // isAllowedLink used to do a plain .includes() check.
+  result = moderation.evaluate({
+    username: 'viewer3',
+    text: 'clips.twitch.tv.evil-login-page.ru/free-nitro',
+    isMod: false,
+    isBroadcaster: false,
+  });
+  assert.strictEqual(result.action, 'delete');
+  assert.strictEqual(result.reason, 'unapproved link');
+  console.log('link filter rejects a domain that only contains the allowlisted string: ok');
+
+  // A message with an allowed link first and a disallowed one after must
+  // still be caught -- the filter used to only ever check the first link.
+  result = moderation.evaluate({
+    username: 'viewer3',
+    text: 'clips.twitch.tv/some-clip also check out totally-not-spam.com',
+    isMod: false,
+    isBroadcaster: false,
+  });
+  assert.strictEqual(result.action, 'delete');
+  assert.strictEqual(result.reason, 'unapproved link');
+  console.log('link filter checks every link in a message, not just the first: ok');
+
   result = moderation.evaluate({ username: 'viewer4', text: 'THIS IS WAY TOO LOUD FOR CHAT', isMod: false, isBroadcaster: false });
   assert.strictEqual(result.action, 'warn');
   assert.strictEqual(result.reason, 'excessive caps');

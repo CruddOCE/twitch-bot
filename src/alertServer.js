@@ -128,7 +128,11 @@ function start() {
   // returns immediately when there are no credentials yet.
   channelStats.start();
 
-  server.listen(port, () => {
+  // Loopback only -- these routes (mute, test-alert, reload-overlays) have no
+  // auth, and everything that talks to this server (OBS, the control panel)
+  // already does so via localhost, so there's no reason for it to be reachable
+  // from the rest of the network.
+  server.listen(port, '127.0.0.1', () => {
     console.log(`[alerts] Overlay running at http://localhost:${port}/overlay.html (add this as an OBS Browser Source)`);
     logger.action('alert-server', `Listening at http://localhost:${port}/overlay.html`);
   });

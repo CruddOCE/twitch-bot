@@ -102,7 +102,10 @@ function getChatToken(clientId = DEFAULT_CLIENT_ID, options = {}) {
       reject(new Error('Timed out waiting for Twitch login (5 minutes). Try again.'));
     }, TIMEOUT_MS);
 
-    server.listen(PORT, () => {
+    // Loopback only -- the first request to /save wins and resolves the auth
+    // promise, so this must not be reachable by anything else on the network
+    // during the sign-in window.
+    server.listen(PORT, '127.0.0.1', () => {
       if (options.onAuthUrl) {
         options.onAuthUrl(authUrl);
       } else {

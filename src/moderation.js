@@ -31,10 +31,20 @@ const cleanupTimer = setInterval(() => {
 }, CLEANUP_INTERVAL_MS);
 cleanupTimer.unref();
 
-const URL_REGEX = /\b((?:https?:\/\/)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/\S*)?)\b/i;
+const URL_REGEX = /\b((?:https?:\/\/)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/\S*)?)\b/gi;
+
+// Compares hostnames, not raw substrings -- "clips.twitch.tv" must not also
+// match "clips.twitch.tv.evil.ru", which .includes() would happily let through.
+function extractHost(url) {
+  return url.replace(/^https?:\/\//i, '').split('/')[0].toLowerCase();
+}
 
 function isAllowedLink(url, allowlist) {
-  return allowlist.some((allowed) => url.toLowerCase().includes(allowed.toLowerCase()));
+  const host = extractHost(url);
+  return allowlist.some((allowed) => {
+    const a = allowed.toLowerCase();
+    return host === a || host.endsWith(`.${a}`);
+  });
 }
 
 function checkCaps(text, rules) {
@@ -73,8 +83,10 @@ function evaluate({ username, text, isMod, isBroadcaster }) {
   }
 
   if (rules.linkFilter && rules.linkFilter.enabled) {
-    const match = text.match(URL_REGEX);
-    if (match && !isAllowedLink(match[1], rules.linkFilter.allowlist || [])) {
+    const matches = text.match(URL_REGEX) || [];
+    const allowlist = rules.linkFilter.allowlist || [];
+    const disallowed = matches.some((url) => !isAllowedLink(url, allowlist));
+    if (disallowed) {
       return { reason: 'unapproved link', action: rules.linkFilter.action, timeoutSeconds: 60 };
     }
   }
